@@ -88,8 +88,8 @@ pub struct MixerView {
     pub copied: Option<CopiedStrip>,
     /// The audio input device that the Input slots choose from.
     pub inputs: crate::audio_rec::InputChoice,
-    /// The text in the Audio FX plug-in picker's search field (see `plugin_picker`).
-    pub picker_search: String,
+    /// The plug-ins picked in the Audio FX menu, most recent first (see `plugin_picker`).
+    pub recent_picks: Vec<crate::plugin_picker::Pick>,
     /// The text in a hosted plug-in window's parameter search field (see `fx_ui`).
     pub plugin_search: String,
     /// A hosted plug-in is shown as its Controls (the sliders) and not in its own window:
@@ -121,7 +121,7 @@ impl Default for MixerView {
             sends_on_faders: None,
             copied: None,
             inputs: crate::audio_rec::InputChoice::default(),
-            picker_search: String::new(),
+            recent_picks: Vec::new(),
             plugin_search: String::new(),
             plugin_controls: false,
             plugin_editor: None,
@@ -857,7 +857,10 @@ fn strip_inserts(p: &Project, i: usize) -> &[Insert] {
 }
 
 /// One Audio FX slot of track `i`: the effect in it (blue, grey when bypassed or silenced),
-/// or the empty slot after the last. Click for the menu, double-click for the effect's window.
+/// or the empty slot after the last. A filled slot has three zones, as in Logic: the left
+/// edge toggles Bypass, the right edge opens the plug-in menu, and the middle opens the
+/// plug-in's window. A right click anywhere on it opens the other actions. The empty slot
+/// opens the plug-in menu on any click.
 #[allow(clippy::too_many_arguments)]
 fn insert_slot(
     ui: &Ui,
@@ -872,76 +875,133 @@ fn insert_slot(
 ) {
     let have = strip_inserts(p, i).get(k).copied();
     let count = strip_inserts(p, i).len();
+    let off = have.is_some_and(|fx| inactive || fx.bypass);
+    let ink = if off { TEXT_DIM } else { Color32::WHITE };
     match have {
-        Some(fx) => {
-            let off = inactive || fx.bypass;
-            slot(
-                g,
-                r,
-                fx.name(),
-                if off { PLUGIN_OFF } else { PLUGIN_BLUE },
-                if off { TEXT_DIM } else { Color32::WHITE },
-            );
-        }
+        Some(fx) => slot(
+            g,
+            r,
+            fx.name(),
+            if off { PLUGIN_OFF } else { PLUGIN_BLUE },
+            ink,
+        ),
         None => slot(g, r, "", SLOT_EMPTY, TEXT),
     }
     if k > count || (have.is_none() && count >= prowave_engine::MAX_INSERTS) {
         return;
     }
-    let resp = ui.interact(r, uid, Sense::click());
-    if have.is_some() && resp.double_clicked() {
-        v.fx_window = Some((i, k));
-        v.plugin_controls = false;
-    }
     let mut act = None;
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(150.0);
-        if let Some(fx) = have {
-            if ui.button(tr("Open")).clicked() {
-                act = Some(InsertAct::Open);
-                ui.close();
-            }
-            if fx.plugin != 0 && ui.button(tr("Controls")).clicked() {
-                act = Some(InsertAct::Controls);
-                ui.close();
-            }
-            if ui.selectable_label(fx.bypass, tr("Bypass")).clicked() {
-                act = Some(InsertAct::Bypass);
-                ui.close();
-            }
-            ui.add_enabled_ui(k > 0, |ui| {
-                if ui.button(tr("Move Up")).clicked() {
-                    act = Some(InsertAct::Move(-1));
-                    ui.close();
-                }
-            });
-            ui.add_enabled_ui(k + 1 < count, |ui| {
-                if ui.button(tr("Move Down")).clicked() {
-                    act = Some(InsertAct::Move(1));
-                    ui.close();
-                }
-            });
-            ui.separator();
-            ui.menu_button(tr("Replace With"), |ui| {
-                if let Some(pick) = crate::plugin_picker::show(ui, &mut v.picker_search) {
-                    act = Some(InsertAct::Replace(pick_insert(pick)));
-                    v.picker_search.clear();
-                    ui.close();
-                }
-            });
-            if ui.button(tr("Remove")).clicked() {
-                act = Some(InsertAct::Remove);
-                ui.close();
-            }
-        } else if let Some(pick) = crate::plugin_picker::show(ui, &mut v.picker_search) {
-            act = Some(InsertAct::Add(pick_insert(pick)));
-            v.picker_search.clear();
-            ui.close();
+    match have {
+        None => {
+            let resp = ui.interact(r, uid, Sense::click());
+            egui::Popup::menu(&resp).show(|ui| act = plugin_menu(ui, v, false));
         }
-    });
+        Some(fx) => {
+            // The zones do not overlap, so each click reaches exactly one of them.
+            let left = Rect::from_min_max(r.left_top(), pos2(r.left() + 14.0, r.bottom()));
+            let right = Rect::from_min_max(pos2(r.right() - 14.0, r.top()), r.right_bottom());
+            let middle = Rect::from_min_max(
+                pos2(r.left() + 14.0, r.top()),
+                pos2(r.right() - 14.0, r.bottom()),
+            );
+            let power = ui.interact(left, uid.with("power"), Sense::click());
+            let open = ui.interact(middle, uid.with("open"), Sense::click());
+            let menu = ui.interact(right, uid.with("menu"), Sense::click());
+            let glyph = Stroke::new(1.2, ink);
+            if power.hovered() {
+                let c = left.center();
+                g.circle_stroke(c + vec2(0.0, 0.5), 4.0, glyph);
+                g.line_segment([c - vec2(0.0, 5.0), c - vec2(0.0, 0.5)], glyph);
+            }
+            if menu.hovered() {
+                let c = right.center();
+                for dir in [-1.0, 1.0] {
+                    let base = c.y + dir * 1.5;
+                    let apex = c.y + dir * 4.5;
+                    g.line_segment([pos2(c.x - 3.0, base), pos2(c.x, apex)], glyph);
+                    g.line_segment([pos2(c.x, apex), pos2(c.x + 3.0, base)], glyph);
+                }
+            }
+            if power.clicked() {
+                act = Some(InsertAct::Bypass);
+            }
+            if open.clicked() {
+                v.fx_window = Some((i, k));
+                v.plugin_controls = false;
+            }
+            egui::Popup::menu(&menu).show(|ui| {
+                if let Some(a) = plugin_menu(ui, v, true) {
+                    act = Some(a);
+                }
+            });
+            for resp in [&power, &open, &menu] {
+                egui::Popup::context_menu(resp).show(|ui| {
+                    if let Some(a) = slot_menu(ui, fx, k, count) {
+                        act = Some(a);
+                    }
+                });
+            }
+        }
+    }
     if let Some(act) = act {
         apply_insert(p, v, i, k, act);
     }
+}
+
+/// The plug-in menu of an Audio FX slot: the picker, with "No Plug-in" first. On a filled slot
+/// a choice replaces its plug-in and "No Plug-in" removes it.
+fn plugin_menu(ui: &mut Ui, v: &mut MixerView, filled: bool) -> Option<InsertAct> {
+    let choice = crate::plugin_picker::show(ui, &v.recent_picks, filled)?;
+    ui.close();
+    Some(match choice {
+        crate::plugin_picker::Choice::NoPlugin => InsertAct::Remove,
+        crate::plugin_picker::Choice::Pick(pick) => {
+            crate::plugin_picker::remember(&mut v.recent_picks, pick.clone());
+            let insert = pick_insert(pick);
+            if filled {
+                InsertAct::Replace(insert)
+            } else {
+                InsertAct::Add(insert)
+            }
+        }
+    })
+}
+
+/// The right-click menu of a filled Audio FX slot: the actions Logic's slot menu has no place
+/// for.
+fn slot_menu(ui: &mut Ui, fx: Insert, k: usize, count: usize) -> Option<InsertAct> {
+    let mut act = None;
+    ui.set_min_width(150.0);
+    if ui.button(tr("Open")).clicked() {
+        act = Some(InsertAct::Open);
+        ui.close();
+    }
+    if fx.plugin != 0 && ui.button(tr("Controls")).clicked() {
+        act = Some(InsertAct::Controls);
+        ui.close();
+    }
+    if ui.selectable_label(fx.bypass, tr("Bypass")).clicked() {
+        act = Some(InsertAct::Bypass);
+        ui.close();
+    }
+    ui.add_enabled_ui(k > 0, |ui| {
+        if ui.button(tr("Move Up")).clicked() {
+            act = Some(InsertAct::Move(-1));
+            ui.close();
+        }
+    });
+    ui.add_enabled_ui(k + 1 < count, |ui| {
+        if ui.button(tr("Move Down")).clicked() {
+            act = Some(InsertAct::Move(1));
+            ui.close();
+        }
+    });
+    ui.separator();
+    if ui.button(tr("Remove")).clicked() {
+        act = Some(InsertAct::Remove);
+        ui.close();
+    }
+    act
 }
 
 /// A new effect for a picker choice: one of Pro Wave's own, or a hosted plug-in, which joins
@@ -2413,6 +2473,39 @@ mod tests {
             );
         }
         assert_eq!(p.tracks[0].inserts.len(), prowave_engine::MAX_INSERTS);
+    }
+
+    #[test]
+    fn no_plug_in_removes_a_filled_slots_effect() {
+        let mut p = mixer_project();
+        let mut v = MixerView::default();
+        apply_insert(
+            &mut p,
+            &mut v,
+            0,
+            0,
+            InsertAct::Add(Insert::new(FxKind::Delay)),
+        );
+        apply_insert(
+            &mut p,
+            &mut v,
+            0,
+            1,
+            InsertAct::Add(Insert::new(FxKind::Reverb)),
+        );
+        apply_insert(&mut p, &mut v, 0, 0, InsertAct::Remove);
+        assert_eq!(
+            p.tracks[0].inserts.len(),
+            1,
+            "only the first slot is cleared"
+        );
+        assert_eq!(p.tracks[0].inserts[0].kind, FxKind::Reverb);
+        apply_insert(&mut p, &mut v, 0, 1, InsertAct::Remove);
+        assert_eq!(
+            p.tracks[0].inserts.len(),
+            1,
+            "No Plug-in on the empty slot does nothing"
+        );
     }
 
     #[test]

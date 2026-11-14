@@ -1,10 +1,11 @@
-//! The Audio FX plug-in picker (Logic: the insert slot's plug-in menu): a search field, the
-//! categories as submenus, and a flat result list while a search is typed.
+//! The Audio FX plug-in menu (Logic: a slot's plug-in menu): "No Plug-in", the recently picked
+//! plug-ins, the categories as submenus, and a submenu for each hosted plug-in format.
 //!
 //! The categories are Logic's, in its order, so the menu reads the same as a Logic channel
 //! strip's. Categories with no effect yet are shown disabled rather than hidden, which keeps
 //! the list stable as effects are added. Installed third-party plug-ins (CLAP, VST3, Audio Units)
-//! follow in a submenu for each format, from the catalog in `crate::plugins`.
+//! follow in a submenu for each format, from the catalog in `crate::plugins`. Every plug-in is a
+//! submenu with one entry, "Stereo", as in Logic: the entry is what picks it.
 use crate::i18n::tr;
 use crate::plugins::{Format, PluginInfo, Scan};
 use egui::Ui;
@@ -28,12 +29,22 @@ pub const CATEGORIES: [&str; 14] = [
     "Utility",
 ];
 
+/// How many recently picked plug-ins the menu keeps.
+pub const RECENT_MAX: usize = 5;
+
 /// What the user chose in the picker.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Pick {
     Effect(FxKind),
     /// An installed CLAP, VST3 or Audio Unit plug-in.
     Plugin(PluginInfo),
+}
+
+/// What the user chose in the menu: a plug-in, or none at all ("No Plug-in").
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Choice {
+    NoPlugin,
+    Pick(Pick),
 }
 
 /// The formats of hosted plug-ins, in the order of the picker's submenus (Logic has one,
@@ -56,77 +67,74 @@ pub fn category(kind: FxKind) -> &'static str {
     }
 }
 
-/// Whether `kind` matches a search: its name, ignoring case and surrounding spaces. An empty
-/// search matches everything.
-pub fn matches(kind: FxKind, query: &str) -> bool {
-    let query = query.trim().to_lowercase();
-    query.is_empty() || kind.name().to_lowercase().contains(&query)
+/// Puts `pick` first in the recent list. A plug-in picked again moves to the front rather than
+/// appearing twice, and the list keeps only the last [`RECENT_MAX`].
+pub fn remember(recent: &mut Vec<Pick>, pick: Pick) {
+    recent.retain(|old| *old != pick);
+    recent.insert(0, pick);
+    recent.truncate(RECENT_MAX);
 }
 
-/// Draws the picker into `ui` and returns the choice, if the user made one. `search` is kept
-/// by the caller so the field survives the frames the menu is open.
-pub fn show(ui: &mut Ui, search: &mut String) -> Option<Pick> {
-    // The first time a picker opens, the installed plug-ins are listed in the background.
+/// The name a pick shows in the menu.
+fn label(pick: &Pick) -> &str {
+    match pick {
+        Pick::Effect(kind) => kind.name(),
+        Pick::Plugin(info) => &info.name,
+    }
+}
+
+/// Draws the menu into `ui` and returns the choice, if the user made one. `recent` is the list
+/// of recent picks (most recent first) and `filled` says whether the slot already has a
+/// plug-in, which decides where the check mark of "No Plug-in" goes.
+pub fn show(ui: &mut Ui, recent: &[Pick], filled: bool) -> Option<Choice> {
+    // The first time a menu opens, the installed plug-ins are listed in the background.
     crate::plugins::scan(false);
     let catalog = crate::plugins::catalog();
     ui.set_min_width(200.0);
-    ui.add(
-        egui::TextEdit::singleline(search)
-            .hint_text(tr("Search"))
-            .desired_width(f32::INFINITY),
-    );
-    let mut picked = None;
-    if search.trim().is_empty() {
-        for name in CATEGORIES {
-            let kinds: Vec<FxKind> = FxKind::ALL
-                .iter()
-                .copied()
-                .filter(|kind| category(*kind) == name)
-                .collect();
-            ui.add_enabled_ui(!kinds.is_empty(), |ui| {
-                ui.menu_button(tr(name), |ui| {
-                    for kind in kinds {
-                        if ui.button(kind.name()).clicked() {
-                            picked = Some(Pick::Effect(kind));
-                        }
-                    }
-                });
-            });
-        }
-        hosted_menus(ui, &catalog, &mut picked);
-    } else {
-        let mut any = false;
-        for kind in FxKind::ALL {
-            if matches(kind, search) {
-                any = true;
-                if ui.button(kind.name()).clicked() {
-                    picked = Some(Pick::Effect(kind));
-                }
-            }
-        }
-        let query = search.trim().to_lowercase();
-        // A long list in a menu is no use: the search is narrowed until it fits.
-        for info in catalog
-            .iter()
-            .filter(|info| info.name.to_lowercase().contains(&query))
-            .take(24)
-        {
-            any = true;
-            let label = format!("{} ({})", info.name, info.format.name());
-            if ui.button(label).clicked() {
-                picked = Some(Pick::Plugin(info.clone()));
-            }
-        }
-        if !any {
-            ui.weak(tr("No plug-ins match"));
-        }
+    let mut choice = None;
+    // Logic marks the empty slot's entry with a check mark; a filled slot has none.
+    let check = if filled { "    " } else { "✔  " };
+    if ui.button(format!("{check}{}", tr("No Plug-in"))).clicked() {
+        choice = Some(Choice::NoPlugin);
     }
-    picked
+    ui.separator();
+    if !recent.is_empty() {
+        ui.weak(tr("Recent"));
+        for pick in recent {
+            leaf(ui, label(pick), pick, &mut choice);
+        }
+        ui.separator();
+    }
+    for name in CATEGORIES {
+        let kinds: Vec<FxKind> = FxKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| category(*kind) == name)
+            .collect();
+        ui.add_enabled_ui(!kinds.is_empty(), |ui| {
+            ui.menu_button(tr(name), |ui| {
+                for kind in kinds {
+                    leaf(ui, kind.name(), &Pick::Effect(kind), &mut choice);
+                }
+            });
+        });
+    }
+    hosted_menus(ui, &catalog, &mut choice);
+    choice
+}
+
+/// A plug-in's submenu with its one entry, "Stereo"; choosing that entry picks the plug-in.
+fn leaf(ui: &mut Ui, text: &str, pick: &Pick, choice: &mut Option<Choice>) {
+    ui.menu_button(text, |ui| {
+        if ui.button(tr("Stereo")).clicked() {
+            *choice = Some(Choice::Pick(pick.clone()));
+        }
+    });
 }
 
 /// The installed plug-ins below the categories: a submenu for each format, then one for each
 /// manufacturer, as Logic's "Audio Units" submenu has.
-fn hosted_menus(ui: &mut Ui, catalog: &[PluginInfo], picked: &mut Option<Pick>) {
+fn hosted_menus(ui: &mut Ui, catalog: &[PluginInfo], choice: &mut Option<Choice>) {
     if matches!(crate::plugins::scan_status(), Scan::Running(..)) {
         ui.separator();
         ui.weak(tr("Scanning plug-ins…"));
@@ -149,9 +157,7 @@ fn hosted_menus(ui: &mut Ui, catalog: &[PluginInfo], picked: &mut Option<Pick>) 
                 };
                 ui.menu_button(vendor, |ui| {
                     for info in group {
-                        if ui.button(&info.name).clicked() {
-                            *picked = Some(Pick::Plugin((*info).clone()));
-                        }
+                        leaf(ui, &info.name, &Pick::Plugin((*info).clone()), choice);
                     }
                 });
             }
@@ -183,43 +189,47 @@ mod tests {
     }
 
     #[test]
-    fn typing_a_search_lists_the_matching_effects() {
-        use crate::ui_test::Harness;
-        let mut h = Harness::new(400.0, 600.0);
-        let mut search = String::new();
-        let mut picked = None;
-        let keep = |ui: &mut Ui, search: &mut String, picked: &mut Option<Pick>| {
-            if let Some(found) = show(ui, search) {
-                *picked = Some(found);
-            }
-        };
-        h.frame(vec![], |ui| keep(ui, &mut search, &mut picked));
-        // The search field is the first widget, at the top left.
-        h.click(egui::pos2(80.0, 12.0), |ui| {
-            keep(ui, &mut search, &mut picked)
-        });
-        h.frame(vec![egui::Event::Text("channel".to_string())], |ui| {
-            keep(ui, &mut search, &mut picked)
-        });
-        assert_eq!(search, "channel", "the field keeps what was typed");
-        assert_eq!(picked, None, "nothing is chosen yet");
-        // The one result is the first row below the field; its exact band depends on the
-        // text style, so try the few rows it can occupy.
-        for y in [26.0, 30.0, 34.0, 38.0, 42.0, 46.0] {
-            h.click(egui::pos2(80.0, y), |ui| keep(ui, &mut search, &mut picked));
-            if picked.is_some() {
-                break;
-            }
-        }
-        assert_eq!(picked, Some(Pick::Effect(FxKind::ChannelEq)));
+    fn the_recent_list_puts_the_latest_pick_first() {
+        let mut recent = Vec::new();
+        remember(&mut recent, Pick::Effect(FxKind::Delay));
+        remember(&mut recent, Pick::Effect(FxKind::Reverb));
+        assert_eq!(
+            recent,
+            [Pick::Effect(FxKind::Reverb), Pick::Effect(FxKind::Delay)]
+        );
     }
 
     #[test]
-    fn search_matches_a_name_ignoring_case_and_spaces() {
-        assert!(matches(FxKind::ChannelEq, " channel "));
-        assert!(matches(FxKind::ChannelEq, "EQ"));
-        assert!(matches(FxKind::MultiComp, "band"));
-        assert!(!matches(FxKind::Delay, "reverb"));
-        assert!(matches(FxKind::Delay, ""), "an empty search shows all");
+    fn a_pick_made_again_moves_to_the_front_without_a_copy() {
+        let mut recent = Vec::new();
+        remember(&mut recent, Pick::Effect(FxKind::Delay));
+        remember(&mut recent, Pick::Effect(FxKind::Reverb));
+        remember(&mut recent, Pick::Effect(FxKind::Delay));
+        assert_eq!(
+            recent,
+            [Pick::Effect(FxKind::Delay), Pick::Effect(FxKind::Reverb)]
+        );
+    }
+
+    #[test]
+    fn the_recent_list_keeps_five_picks() {
+        let mut recent = Vec::new();
+        for kind in [
+            FxKind::ChannelEq,
+            FxKind::Compressor,
+            FxKind::Reverb,
+            FxKind::Delay,
+            FxKind::Chorus,
+            FxKind::Phaser,
+        ] {
+            remember(&mut recent, Pick::Effect(kind));
+        }
+        assert_eq!(recent.len(), RECENT_MAX);
+        assert_eq!(recent[0], Pick::Effect(FxKind::Phaser));
+        assert_eq!(
+            recent.last(),
+            Some(&Pick::Effect(FxKind::Compressor)),
+            "the oldest pick, Channel EQ, is the one dropped"
+        );
     }
 }
