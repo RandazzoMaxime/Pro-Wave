@@ -983,7 +983,7 @@ pub fn show(ui: &mut Ui, p: &mut Project, s: &mut UiState, meters: &Meters) {
     let strips_h = (panel.bottom() - y - 4.0).max(STRIPS_MIN_H);
     if !p.tracks.is_empty() {
         let keys = [StripKey::Track(ti), StripKey::StereoOut];
-        let r = rows(y, fx_rows_for(p, &keys), send_rows_for(p, &keys));
+        let r = rows(y, fx_rows_for(p, &keys), send_rows_for(p, &keys), false);
         let sw = (w - 12.0) / 2.0;
         for (n, key) in keys.iter().enumerate() {
             let strip = Rect::from_min_size(
@@ -1002,6 +1002,10 @@ pub fn show(ui: &mut Ui, p: &mut Project, s: &mut UiState, meters: &Meters) {
                 "inspector",
                 NameStyle::Plain,
             );
+        }
+        // A MIDI FX slot clicked in a strip opens the MIDI FX window, as the Mixer's does.
+        if std::mem::take(&mut s.mixer.midi_fx_asked) {
+            s.show_midi_fx = true;
         }
     }
 

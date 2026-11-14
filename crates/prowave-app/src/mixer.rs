@@ -1,6 +1,7 @@
 //! Mixer (Logic Pro: Mixer in the main window): local toolbar, row labels and channel strips
-//! with Setting, Gain Reduction, EQ, Input, Audio FX, Sends, Output, Group, Automation, Pan,
-//! dB readouts, fader with scale, stereo meter, M/S and the coloured name label.
+//! with Setting, Gain Reduction, EQ, MIDI FX, Input, Audio FX, Sends, Output, Group, Automation,
+//! the track icon, Pan, dB readouts, fader with scale, stereo meter, M/S and the coloured name
+//! label.
 //!
 //! Works today: fader, pan, mute, solo (all reach the engine), real post-fader meters with
 //! peak hold, strip selection, Single/Tracks/All, the strip-type filters, scrolling; the Audio
@@ -47,6 +48,8 @@ const MUTE_ON: Color32 = Color32::from_rgb(0x3b, 0x8c, 0xe6);
 const SOLO_ON: Color32 = Color32::from_rgb(0xe6, 0xc2, 0x2e);
 const OUT_PURPLE: Color32 = Color32::from_rgb(0x8a, 0x3f, 0xc8);
 const MASTER_PINK: Color32 = Color32::from_rgb(0xb0, 0x3c, 0x9a);
+/// Logic's green Input slot of a software instrument (Instrument and Drummer tracks).
+const INSTRUMENT_GREEN: Color32 = Color32::from_rgb(0x2e, 0x8b, 0x3c);
 
 /// Fader/meter scale marks in dB, top to bottom (Logic's channel strip scale).
 const SCALE: [f32; 11] = [
@@ -86,6 +89,9 @@ pub struct MixerView {
     pub sends_on_faders: Option<u8>,
     /// Edit > Copy Channel Strip.
     pub copied: Option<CopiedStrip>,
+    /// A strip's MIDI FX slot was clicked: the MIDI FX window opens (the Mixer and the
+    /// Inspector take it into `UiState::show_midi_fx`).
+    pub midi_fx_asked: bool,
     /// The audio input device that the Input slots choose from.
     pub inputs: crate::audio_rec::InputChoice,
     /// The text in the Audio FX plug-in picker's search field (see `plugin_picker`).
@@ -120,6 +126,7 @@ impl Default for MixerView {
             auto_editor: Default::default(),
             sends_on_faders: None,
             copied: None,
+            midi_fx_asked: false,
             inputs: crate::audio_rec::InputChoice::default(),
             picker_search: String::new(),
             plugin_search: String::new(),
@@ -593,6 +600,7 @@ pub struct Rows {
     setting: f32,
     gain_red: f32,
     eq: f32,
+    midi_fx: f32,
     input: f32,
     fx: f32,
     fx_rows: usize,
@@ -601,29 +609,40 @@ pub struct Rows {
     output: f32,
     group: f32,
     automation: f32,
+    /// The track icon's row (24 points), or None when the strips have no icon (the Inspector).
+    icon: Option<f32>,
     pan: f32,
     db: f32,
     fader_top: f32,
 }
 
-pub fn rows(top: f32, fx_rows: usize, send_rows: usize) -> Rows {
+/// The rows of a strip from `top` down. `icon` gives the track icon row between Automation and
+/// Pan (the Mixer has it; Logic's Inspector strip does not).
+pub fn rows(top: f32, fx_rows: usize, send_rows: usize, icon: bool) -> Rows {
     let fx_rows = fx_rows.max(2);
     let send_rows = send_rows.clamp(1, MAX_SENDS);
     let setting = top + 6.0;
     let gain_red = setting + 20.0;
     let eq = gain_red + 12.0;
-    let input = eq + 28.0;
+    let midi_fx = eq + 28.0;
+    let input = midi_fx + 22.0;
     let fx = input + 22.0;
     let sends = fx + fx_rows as f32 * 17.0 + 4.0;
     let output = sends + send_rows as f32 * 17.0 + 3.0;
     let group = output + 20.0;
     let automation = group + 20.0;
-    let pan = automation + 22.0;
+    let icon_top = automation + 22.0;
+    let pan = if icon {
+        icon_top + 30.0
+    } else {
+        automation + 22.0
+    };
     let db = pan + 30.0;
     Rows {
         setting,
         gain_red,
         eq,
+        midi_fx,
         input,
         fx,
         fx_rows,
@@ -632,6 +651,7 @@ pub fn rows(top: f32, fx_rows: usize, send_rows: usize) -> Rows {
         output,
         group,
         automation,
+        icon: icon.then_some(icon_top),
         pan,
         db,
         fader_top: db + 18.0,
@@ -691,7 +711,7 @@ fn strip_keys(p: &Project, v: &MixerView) -> Vec<StripKey> {
 /// name label at the bottom. A shorter panel cuts the fader off (issue #36).
 pub fn min_panel_height(p: &Project, v: &MixerView) -> f32 {
     let keys = strip_keys(p, v);
-    let r = rows(0.0, fx_rows_for(p, &keys), send_rows_for(p, &keys));
+    let r = rows(0.0, fx_rows_for(p, &keys), send_rows_for(p, &keys), true);
     TOOLBAR_H + r.fader_top + STRIP_FOOTER_H + MIN_FADER_H
 }
 
@@ -701,6 +721,119 @@ pub fn min_panel_height(p: &Project, v: &MixerView) -> f32 {
 pub fn panel_height(room: f32, p: &Project, v: &MixerView) -> f32 {
     let usual = (room * 0.48).clamp(160.0, 500.0);
     usual.max(min_panel_height(p, v)).min(room.max(0.0))
+}
+
+/// The Aux strips and the bus each listens to, as (bus, name) for the send menus' "Bus N → name"
+/// lines. An Aux past the last bus listens to none and is left out.
+fn aux_bus_names(p: &Project) -> Vec<(u8, String)> {
+    p.tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.kind == TrackKind::Aux)
+        .map(|(i, t)| (p.aux_bus_of(i), t.name.clone()))
+        .filter(|(bus, _)| *bus != 0)
+        .collect()
+}
+
+/// A bus in the send menus: "Bus N", or "Bus N → name" when an Aux strip listens to it.
+fn bus_label(bus: u8, aux: &[(u8, String)]) -> String {
+    match aux.iter().find(|(b, _)| *b == bus) {
+        Some((_, name)) => trf("Bus {} → {}", &[&bus, name]),
+        None => trf("Bus {}", &[&bus]),
+    }
+}
+
+/// One line of the send menu: checked or not, greyed out unless `enabled`. True when clicked.
+fn send_menu_line(ui: &mut Ui, enabled: bool, checked: bool, text: &str) -> bool {
+    ui.add_enabled(enabled, egui::Button::selectable(checked, text))
+        .clicked()
+}
+
+/// Logic's send menu, the same for a filled slot and an empty one. `edit` is the slot's send,
+/// None when the slot is empty; the menu changes it, and a bus picked in an empty slot makes a
+/// new send (level 0.5, post-fader). `aux` names the buses and `on_faders` is the Mixer's
+/// Sends on Faders bus.
+fn send_menu(
+    ui: &mut Ui,
+    edit: &mut Option<SendSlot>,
+    aux: &[(u8, String)],
+    on_faders: &mut Option<u8>,
+) {
+    ui.set_min_width(190.0);
+    let filled = *edit;
+    if let Some(bus) = filled.and_then(|s| s.bus) {
+        if send_menu_line(ui, true, true, &bus_label(bus, aux)) {
+            ui.close();
+        }
+        ui.separator();
+    }
+    // Not implemented yet, so they only show what Logic's menu has.
+    send_menu_line(ui, false, false, tr("Independent Pan"));
+    ui.separator();
+    send_menu_line(ui, false, false, tr("Post Pan"));
+    if send_menu_line(
+        ui,
+        filled.is_some(),
+        filled.is_some_and(|s| !s.pre),
+        tr("Post Fader"),
+    ) {
+        if let Some(s) = edit {
+            s.pre = false;
+        }
+        ui.close();
+    }
+    if send_menu_line(
+        ui,
+        filled.is_some(),
+        filled.is_some_and(|s| s.pre),
+        tr("Pre Fader"),
+    ) {
+        if let Some(s) = edit {
+            s.pre = true;
+        }
+        ui.close();
+    }
+    ui.separator();
+    if send_menu_line(ui, filled.is_some(), false, tr("No Send")) {
+        // A send that is taken away stops being the Sends on Faders bus too.
+        if let Some(bus) = filled.and_then(|s| s.bus) {
+            if *on_faders == Some(bus) {
+                *on_faders = None;
+            }
+        }
+        *edit = None;
+        ui.close();
+    }
+    ui.separator();
+    ui.menu_button(tr("Bus"), |ui| {
+        ui.set_min_width(190.0);
+        for bus in (1..=prowave_engine::MAX_BUSES).map(|b| b as u8) {
+            let current = edit.and_then(|s| s.bus);
+            if send_menu_line(ui, true, current == Some(bus), &bus_label(bus, aux)) {
+                match edit {
+                    Some(s) => s.bus = Some(bus),
+                    None => {
+                        *edit = Some(SendSlot {
+                            bus: Some(bus),
+                            level: 0.5,
+                            pre: false,
+                        })
+                    }
+                }
+                ui.close();
+            }
+        }
+    });
+    ui.separator();
+    ui.add_enabled(false, egui::Button::new(tr("Copy Fader to Send")));
+    let on_bus = filled.and_then(|s| s.bus);
+    let sending = on_bus.is_some_and(|b| *on_faders == Some(b));
+    if send_menu_line(ui, on_bus.is_some(), sending, tr("Sends on Faders")) {
+        if let Some(bus) = on_bus {
+            *on_faders = if sending { None } else { Some(bus) };
+        }
+        ui.close();
+    }
 }
 
 /// The strip's send slots, one per row: the sends it has, then one empty slot to add another.
@@ -715,6 +848,8 @@ fn send_slots(
     sends: &mut Vec<SendSlot>,
     uid: egui::Id,
     inactive: bool,
+    aux: &[(u8, String)],
+    on_faders: &mut Option<u8>,
 ) {
     let mut remove = None;
     for k in 0..rows {
@@ -723,28 +858,25 @@ fn send_slots(
             vec2(area.width(), 16.0),
         );
         if k < sends.len() {
-            if !send_slot(ui, g, r, &mut sends[k], uid.with(k), inactive) {
+            if !send_slot(
+                ui,
+                g,
+                r,
+                &mut sends[k],
+                uid.with(k),
+                inactive,
+                aux,
+                on_faders,
+            ) {
                 remove = Some(k);
             }
         } else if k == sends.len() && sends.len() < MAX_SENDS {
             let resp = ui.interact(r, uid.with(("empty", k)), Sense::click());
             slot(g, r, "", SLOT_EMPTY, TEXT);
             let mut picked = None;
-            egui::Popup::menu(&resp).show(|ui| {
-                ui.set_min_width(110.0);
-                for b in 1..=8u8 {
-                    if ui.button(trf("Bus {}", &[&b])).clicked() {
-                        picked = Some(b);
-                        ui.close();
-                    }
-                }
-            });
-            if let Some(bus) = picked {
-                sends.push(SendSlot {
-                    bus: Some(bus),
-                    level: 0.5,
-                    pre: false,
-                });
+            egui::Popup::menu(&resp).show(|ui| send_menu(ui, &mut picked, aux, on_faders));
+            if let Some(send) = picked {
+                sends.push(send);
             }
         }
     }
@@ -757,6 +889,7 @@ fn send_slots(
 /// to pick a bus; the eye marks a pre-fader send. The engine copies the strip's signal to the
 /// bus, where the Aux strip that listens to it plays it. Returns false when the user chose
 /// "No Send".
+#[allow(clippy::too_many_arguments)]
 fn send_slot(
     ui: &Ui,
     g: &Painter,
@@ -764,6 +897,8 @@ fn send_slot(
     send: &mut crate::model::SendSlot,
     uid: egui::Id,
     inactive: bool,
+    aux: &[(u8, String)],
+    on_faders: &mut Option<u8>,
 ) -> bool {
     let Some(bus) = send.bus else {
         return false;
@@ -785,27 +920,12 @@ fn send_slot(
         g.circle_stroke(c, 4.5, Stroke::new(1.0, Color32::WHITE));
         g.circle_filled(c, 1.6, Color32::WHITE);
     }
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(130.0);
-        for b in 1..=8u8 {
-            if ui
-                .selectable_label(send.bus == Some(b), trf("Bus {}", &[&b]))
-                .clicked()
-            {
-                send.bus = Some(b);
-                ui.close();
-            }
-        }
-        ui.separator();
-        if ui.selectable_label(send.pre, tr("Pre Fader")).clicked() {
-            send.pre = !send.pre;
-            ui.close();
-        }
-        if ui.button(tr("No Send")).clicked() {
-            keep = false;
-            ui.close();
-        }
-    });
+    let mut edit = Some(*send);
+    egui::Popup::menu(&resp).show(|ui| send_menu(ui, &mut edit, aux, on_faders));
+    match edit {
+        Some(changed) => *send = changed,
+        None => keep = false,
+    }
     // Level knob: drag vertically; the indicator sweeps like a pan knob.
     let kresp = ui.interact(
         Rect::from_center_size(knob_c, vec2(16.0, 16.0)),
@@ -1085,6 +1205,59 @@ pub enum NameStyle {
     Plain,
 }
 
+/// The MIDI FX slot of an Instrument or Drummer track: the name of its first MIDI effect, or an
+/// empty slot. A click selects the track and asks for the MIDI FX window (see `midi_fx_ui`);
+/// the Inspector captions an empty slot, as it captions its other empty slots.
+#[allow(clippy::too_many_arguments)]
+fn midi_fx_slot(
+    ui: &Ui,
+    g: &Painter,
+    r: Rect,
+    p: &mut Project,
+    v: &mut MixerView,
+    i: usize,
+    uid: egui::Id,
+    inactive: bool,
+    captions: bool,
+) {
+    match p.tracks[i].midi_fx.first() {
+        Some(fx) => {
+            let off = inactive || !fx.on;
+            slot(
+                g,
+                r,
+                crate::midi_fx_ui::title(&fx.fx),
+                if off { PLUGIN_OFF } else { PLUGIN_BLUE },
+                if off { TEXT_DIM } else { Color32::WHITE },
+            );
+        }
+        None => {
+            slot(g, r, "", SLOT_EMPTY, TEXT);
+            if captions {
+                caption(g, r, tr("MIDI FX"));
+            }
+        }
+    }
+    if ui.interact(r, uid, Sense::click()).clicked() {
+        p.selected_track = i;
+        v.midi_fx_asked = true;
+    }
+}
+
+/// Logic's track-icon stand-in for the Stereo Out and the Master: five white bars of
+/// different heights, centred in `r`.
+fn wave_bars(g: &Painter, r: Rect) {
+    const HEIGHTS: [f32; 5] = [0.4, 0.8, 1.0, 0.6, 0.9];
+    for (n, h) in HEIGHTS.iter().enumerate() {
+        let x = r.center().x + (n as f32 - 2.0) * 3.0;
+        let half = r.height() * h / 2.0;
+        g.line_segment(
+            [pos2(x, r.center().y - half), pos2(x, r.center().y + half)],
+            Stroke::new(1.6, Color32::WHITE),
+        );
+    }
+}
+
 /// Draws one channel strip in `strip` and applies its edits to the project.
 /// `ns` keeps widget ids unique when the same strip is shown in two places.
 #[allow(clippy::too_many_arguments)]
@@ -1103,6 +1276,8 @@ pub fn channel_strip(
     let selected = matches!(key, StripKey::Track(i) if i == p.selected_track);
     let inactive = matches!(key, StripKey::Track(i)
         if p.is_muted(i) || crate::tracks_area::silenced_by_solo(p, i));
+    // Named before the strip borrows its sends mutably: the send menus name the buses.
+    let aux = aux_bus_names(p);
     let (plug, plug_text) = if inactive {
         (PLUGIN_OFF, TEXT_DIM)
     } else {
@@ -1204,10 +1379,31 @@ pub fn channel_strip(
             );
         }
         eq_thumb(g, row(r.eq, 24.0), eq_params);
+        if let StripKey::Track(i) = key {
+            if matches!(kind, Some(TrackKind::Instrument | TrackKind::Drummer)) {
+                midi_fx_slot(
+                    ui,
+                    g,
+                    row(r.midi_fx, 16.0),
+                    p,
+                    v,
+                    i,
+                    id(ns, (key, "midi_fx")),
+                    inactive,
+                    name_style == NameStyle::Plain,
+                );
+            }
+        }
         let input_r = row(r.input, 16.0);
         match (kind, instrument) {
+            // A software instrument's input is green in Logic; grey while the strip is silent.
             (Some(TrackKind::Instrument | TrackKind::Drummer), Some(inst)) => {
-                slot(g, input_r, inst, plug, plug_text)
+                let (fill, text) = if inactive {
+                    (PLUGIN_OFF, TEXT_DIM)
+                } else {
+                    (INSTRUMENT_GREEN, Color32::WHITE)
+                };
+                slot(g, input_r, inst, fill, text)
             }
             // An aux strip's input is the bus it listens to: Aux 1 takes Bus 1, and so on.
             (Some(TrackKind::Aux), _) => {
@@ -1288,6 +1484,8 @@ pub fn channel_strip(
                     &mut p.tracks[i].sends,
                     id(ns, (key, "send")),
                     inactive,
+                    &aux,
+                    &mut v.sends_on_faders,
                 );
             }
             StripKey::StereoOut => slot(g, row(r.sends, 16.0), "", SLOT_EMPTY, TEXT),
@@ -1359,6 +1557,21 @@ pub fn channel_strip(
                 i,
                 id(ns, (key, "auto")),
             );
+        }
+    }
+    // The track icon in a coloured square, as in Logic's Mixer. The Stereo Out and the Master
+    // have no track icon: a waveform stands for them.
+    if let Some(icon_top) = r.icon {
+        let square =
+            Rect::from_center_size(pos2(strip.center().x, icon_top + 12.0), vec2(22.0, 22.0));
+        g.rect_filled(square, 4.0, color);
+        match key {
+            StripKey::Track(i) => crate::track_icons::draw_icon(
+                g,
+                square.shrink(3.0),
+                crate::track_icons::track_icon(&p.tracks[i]),
+            ),
+            _ => wave_bars(g, square.shrink(4.0)),
         }
     }
     let pan_c = pos2(strip.center().x, r.pan + 12.0);
@@ -2147,7 +2360,12 @@ pub fn show(ui: &mut Ui, p: &mut Project, s: &mut UiState, meters: &Meters) {
     v.scroll_x = v
         .scroll_x
         .clamp(0.0, (total_w - strips_area.width() + 8.0).max(0.0));
-    let r = rows(body.top(), fx_rows_for(p, &keys), send_rows_for(p, &keys));
+    let r = rows(
+        body.top(),
+        fx_rows_for(p, &keys),
+        send_rows_for(p, &keys),
+        true,
+    );
 
     // Row labels.
     let gl = ui.painter_at(labels);
@@ -2164,6 +2382,7 @@ pub fn show(ui: &mut Ui, p: &mut Project, s: &mut UiState, meters: &Meters) {
     label_at(r.setting, 16.0, tr("Setting"));
     label_at(r.gain_red, 8.0, tr("Gain Reduction"));
     label_at(r.eq, 24.0, "EQ");
+    label_at(r.midi_fx, 16.0, tr("MIDI FX"));
     label_at(r.input, 16.0, tr("Input"));
     label_at(r.fx, 15.0, tr("Audio FX"));
     label_at(r.sends, 16.0, tr("Sends"));
@@ -2196,6 +2415,9 @@ pub fn show(ui: &mut Ui, p: &mut Project, s: &mut UiState, meters: &Meters) {
             NameStyle::Coloured,
         );
     }
+    if std::mem::take(&mut v.midi_fx_asked) {
+        s.show_midi_fx = true;
+    }
 }
 
 #[cfg(test)]
@@ -2219,7 +2441,12 @@ mod tests {
             .map(StripKey::Track)
             .chain([StripKey::StereoOut, StripKey::Master])
             .collect();
-        let r = rows(TOOLBAR_H, fx_rows_for(p, &keys), send_rows_for(p, &keys));
+        let r = rows(
+            TOOLBAR_H,
+            fx_rows_for(p, &keys),
+            send_rows_for(p, &keys),
+            true,
+        );
         let strip_bottom = 700.0 - 2.0;
         let top = r.fader_top + 8.0;
         let bottom = strip_bottom - 26.0 - 22.0 - 6.0;
@@ -2490,7 +2717,7 @@ mod tests {
         let keys = [StripKey::Track(0), StripKey::Track(1)];
         assert_eq!(send_rows_for(&p, &keys), 3);
         assert_eq!(send_rows_for(&Project::empty(), &[StripKey::Track(0)]), 1);
-        let r = rows(0.0, 3, 3);
+        let r = rows(0.0, 3, 3, true);
         assert!(r.output - r.sends >= 3.0 * 17.0);
         let mut h = crate::ui_test::Harness::new(1400.0, 700.0);
         let mut s = UiState::new();
@@ -2508,6 +2735,36 @@ mod tests {
     }
 
     #[test]
+    fn rows_put_midi_fx_between_eq_and_input_and_the_icon_between_automation_and_pan() {
+        let r = rows(0.0, 2, 1, true);
+        assert!(r.eq < r.midi_fx && r.midi_fx < r.input);
+        assert!(r.input - r.midi_fx >= 16.0, "the MIDI FX slot is 16 high");
+        let icon = r.icon.expect("the Mixer has the icon row");
+        assert!(r.automation < icon && icon < r.pan);
+        assert!(r.pan - icon >= 24.0, "the icon row is 24 high");
+        // The Inspector has no icon row: Pan sits right under Automation, as before.
+        let plain = rows(0.0, 2, 1, false);
+        assert!(plain.icon.is_none());
+        assert!(plain.pan - plain.automation < r.pan - r.automation);
+    }
+
+    #[test]
+    fn a_bus_names_the_aux_strip_that_listens_to_it() {
+        let mut p = Project::empty();
+        p.add_track(TrackKind::Audio);
+        p.add_track(TrackKind::Aux);
+        p.add_track(TrackKind::Aux);
+        let aux = aux_bus_names(&p);
+        // The first Aux listens to Bus 1 and the second to Bus 2, in track order.
+        assert_eq!(
+            aux,
+            vec![(1, "Aux 1".to_string()), (2, "Aux 2".to_string())]
+        );
+        assert_eq!(bus_label(1, &aux), "Bus 1 → Aux 1");
+        assert_eq!(bus_label(3, &aux), "Bus 3");
+    }
+
+    #[test]
     fn the_mixer_panel_keeps_a_whole_strip_visible_on_a_short_screen() {
         let mut p = mixer_project();
         let s = UiState::new();
@@ -2517,7 +2774,7 @@ mod tests {
         let room = 600.0;
         let height = panel_height(room, &p, &s.mixer);
         let keys = strip_keys(&p, &s.mixer);
-        let r = rows(0.0, fx_rows_for(&p, &keys), send_rows_for(&p, &keys));
+        let r = rows(0.0, fx_rows_for(&p, &keys), send_rows_for(&p, &keys), true);
         assert!(
             height - TOOLBAR_H - STRIP_FOOTER_H - r.fader_top >= MIN_FADER_H,
             "a {height}-point panel left no fader"
