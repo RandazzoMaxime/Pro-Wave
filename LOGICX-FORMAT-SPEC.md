@@ -170,6 +170,36 @@ name: LEN bytes printable ASCII 0x20-0x7f
 ```
 - Regions clustered: strip suffixes `: Take 14`, `: Comp A.1`, `_001`, `#06`, `.N` iteratively. Consecutive records sharing base name = one user track.
 
+### What the real file shows
+
+Studied on `Projet.logicx` (Logic Pro 11.0.0, 3 tracks in `MetaData.plist`, `ProjectData` 143 288 bytes). Each item says whether the reader decodes it (`read_full`), whether it was only checked by hand, or whether it is still unknown.
+
+**Root header (decoded, checked on the real file).** 24 bytes: magic `23 47 C0 AB`, then `CD 09 03 00`, `04 00 00 00`, `01 00 08 00`, a `u32` little-endian payload length at offset 16 (143 264 here), and four zero bytes. The payload starts at 24, and `24 + length` equals the file size. `read_full` refuses a file shorter than that with `Error::Truncated`. Two more magics sit inside the payload (at 60 and 760), which the scanners do not use.
+
+**Stored tags.** Four-character tags are stored reversed (`karT` is `Trak`, `qeSM` is `MSeq`, `qSvE` is `EvSq`, `ivnE` is `Envi`, `gnoS` is `Song`). Only the record shapes listed below are decoded; the tag counts in the table above were not re-checked.
+
+**Channel strips (decoded, 267 records).** Each record is one `0x00` byte, then a 16-byte name field that starts with a space (`0x20`) and holds a NUL-padded printable name, then an 8-byte descriptor. This gives the track names and kinds in file order: `Audio 1` to `Audio 5`, `Aux 1`, `Aux 2`, `Inst 1`, `Inst 2`, then 256 default busses, `Master` and `Output 1-2`. Descriptor head byte: `0x89` master, `0x49` output, `0xE9` bus, `0xAB` audio, or aux when byte 1 is `0xF5`, `0x29` instrument when byte 2 is `0xF7` (Inst 1) or `0xF3` (Inst 2).
+- Correction to the Shape 4 rule: byte 2 bit 2 is set on busses, master and output too, so it does not mark a strip in use. Byte 4 non-zero marks exactly `Audio 1`, `Audio 2` and `Inst 1`, which matches `NumberOfTracks=3`. The reader uses that rule. It is a guess from one project.
+
+**Audio Unit descriptors (decoded, 1 found).** The type code is stored little-endian (`fmua`, which is `aumf`, a music effect; the file says so, although the plug-in is an insert). The manufacturer code sits 4 bytes before it (`FbaF`, which is `FabF`), the subtype 4 bytes after (`p4QF`, which is `FQ4p`), and the plug-in name `Pro-Q 4` sits in the 12 bytes before the manufacturer code, NUL-padded.
+
+**Audio Unit state (decoded, verified).** An XML property list follows the descriptor at 55 954. It is an Audio Unit class-info dictionary with `type`, `subtype` and `manufacturer` integers (which match the descriptor when read big-endian), `version` 0, `name` `Default Setting`, and a vendor key `FabFilterPluginState`, a 2 619-byte binary blob that starts with `FFBS`. Logic does not store the standard `data` key. `read_full` moves the blob into `data` and writes the dictionary back as an XML plist, which is what the host hands to `kAudioUnitProperty_ClassInfo`. Whether FabFilter accepts its own blob under `data` has not been tested on macOS.
+
+**Stock plug-ins (decoded for two).** The literal `GAME` tag is preceded by two flag bytes (14 and 13 bytes before it) and by the 12-byte name. `02 02 SmpleDly` is an insert; the name is what the project stores, and it is presumably Logic's Sample Delay. `00 01 Klopfgeist` is the metronome. The other 22 occurrences of `GAME` are not records (their flags are `00 00` or they sit inside other structures).
+
+**Sampler (decoded, the instrument file only).** The tag `PMAS` (which is `SAMP` reversed) is followed by the sub-tag `1MAS` and the NUL-terminated name `Classic Bass Finger.exs`. The file itself is at `Media/Sampler Instruments/Classic Bass Finger.exs` (5.4 MB). The sampler's zones and parameters are not decoded.
+
+**Ownership of plug-ins (guess).** A plug-in belongs to the nearest channel strip that starts before it. The Sampler, Sample Delay and Pro-Q 4 all sit between `Inst 1` and `Inst 2`, so they go to `Inst 1`. The Klopfgeist sits after `Inst 2`, which is not in use, so it is unassigned. The project does not state the owner of a plug-in in any field the reader found.
+
+**Found but not decoded.**
+- Seven NSKeyedArchiver blobs (`bplist00`, at 27 033, 27 356, 27 969, 28 292, 50 462, 60 094 and 62 883). The one at 60 094 holds the Smart Controls mapping (`kSavedValueFloatKey`, `MAPlugInParameterMapping`); the one at 62 883 holds `Smart Knob 1` to `Smart Knob 8` and `IdentityIndexLookup`. The others hold empty dictionaries or the processor ID.
+- `Autosave/*.songData` begins with a 16-byte header and a zlib stream at offset 16. Decompressed, it is 325 663 bytes, starts with the same magic, and contains the same tags (`GAME` and `Pro-Q` strings included). It was not parsed. `*.eventData` decompresses to 1 264 bytes of 32-byte records that begin `68 26 94 F5`. Neither is decoded.
+- `MSeq` (`qeSM`) and `EvSq` (`qSvE`) records: the MIDI notes are not decoded, so `MidiRegion::notes` stays empty. The project has no audio region records (`gRuA` is absent), and `Media/Audio Files/` is empty, so `AudioRegion` stays empty too.
+- Volume, pan, mute, solo and bypass are not located in `ProjectData`, so the reader reports them as `None`.
+- Track names in the regions and the automation section (`Audio 1` at 133 512, and similar) are not used.
+
+**Not checked.** Only one project was studied, made on one machine, and the shapes above are not yet confirmed on other Logic versions or other projects.
+
 ## 3. How to Write .logicx (Export) — Seed Synthesis Method
 
 You CANNOT hand-craft ProjectData from scratch reliably. Logic is strict, will show "Project corrupted" if bytes wrong.
