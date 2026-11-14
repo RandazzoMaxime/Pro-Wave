@@ -1,18 +1,17 @@
 //! Logic's "Create New Track" dialog: the + above the track headers opens it, rather than
-//! adding a software instrument track straight away. It offers the same four families as
-//! Logic, a choice inside each, a Details panel with the options of the chosen family, and
+//! adding a software instrument track straight away. It offers two of Logic's four families (MIDI
+//! and Audio; Pattern and Session Player are left out), a choice inside each, a Details panel with the options of the chosen family, and
 //! how many tracks to create.
 
 use egui::{
-    pos2, vec2, Align, Align2, Color32, Layout, Margin, Painter, Pos2, Rect, RichText, Sense,
-    Stroke, StrokeKind,
+    pos2, vec2, Align, Align2, Color32, Layout, Margin, Painter, Pos2, RichText, Sense, Stroke,
 };
 
 use crate::i18n::tr;
 use crate::model::{Project, TrackKind};
 use crate::UiState;
 
-const WIDTH: f32 = 900.0;
+const WIDTH: f32 = 560.0;
 const MARGIN: f32 = 16.0;
 const CARD_GAP: f32 = 12.0;
 const CARD_MARGIN: f32 = 12.0;
@@ -30,8 +29,6 @@ const CANCEL_BG: Color32 = Color32::from_rgb(84, 86, 90);
 const LIGHT_TEXT: Color32 = Color32::from_rgb(220, 220, 222);
 const DISABLED_TEXT: Color32 = Color32::from_rgb(105, 105, 108);
 const GREEN: Color32 = Color32::from_rgb(40, 160, 60);
-const INDIGO: Color32 = Color32::from_rgb(72, 64, 190);
-const GOLD: Color32 = Color32::from_rgb(190, 140, 10);
 const BLUE: Color32 = Color32::from_rgb(20, 100, 220);
 
 /// The track a dialog choice creates.
@@ -40,9 +37,6 @@ pub enum Choice {
     #[default]
     SoftwareInstrument,
     ExternalMidi,
-    Pattern,
-    PatternExternalMidi,
-    Drummer,
     AudioMic,
     AudioGuitar,
 }
@@ -50,18 +44,16 @@ pub enum Choice {
 impl Choice {
     fn kind(self) -> TrackKind {
         match self {
-            Self::SoftwareInstrument | Self::Pattern => TrackKind::Instrument,
-            Self::ExternalMidi | Self::PatternExternalMidi => TrackKind::ExternalMidi,
-            Self::Drummer => TrackKind::Drummer,
+            Self::SoftwareInstrument => TrackKind::Instrument,
+            Self::ExternalMidi => TrackKind::ExternalMidi,
             Self::AudioMic | Self::AudioGuitar => TrackKind::Audio,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::SoftwareInstrument | Self::Pattern => tr("Software Instrument"),
-            Self::ExternalMidi | Self::PatternExternalMidi => tr("External MIDI"),
-            Self::Drummer => tr("Drummer"),
+            Self::SoftwareInstrument => tr("Software Instrument"),
+            Self::ExternalMidi => tr("External MIDI"),
             Self::AudioMic => tr("Mic or Line"),
             Self::AudioGuitar => tr("Guitar or Bass"),
         }
@@ -94,8 +86,6 @@ impl NewTrackDialog {
 #[derive(Clone, Copy)]
 enum Glyph {
     Note,
-    Grid,
-    Guitar,
     Wave,
 }
 
@@ -113,16 +103,9 @@ impl Entry {
             choice: Some(choice),
         }
     }
-
-    fn unavailable(label: &'static str) -> Self {
-        Self {
-            label,
-            choice: None,
-        }
-    }
 }
 
-/// One of the four cards: its name, colour, glyph and the choices in it.
+/// One of the cards: its name, colour, glyph and the choices in it.
 struct Family {
     name: &'static str,
     color: Color32,
@@ -130,7 +113,7 @@ struct Family {
     entries: Vec<Entry>,
 }
 
-fn families() -> [Family; 4] {
+fn families() -> [Family; 2] {
     [
         Family {
             name: tr("MIDI"),
@@ -139,25 +122,6 @@ fn families() -> [Family; 4] {
             entries: vec![
                 Entry::offered(Choice::SoftwareInstrument),
                 Entry::offered(Choice::ExternalMidi),
-            ],
-        },
-        Family {
-            name: tr("Pattern"),
-            color: INDIGO,
-            glyph: Glyph::Grid,
-            entries: vec![
-                Entry::offered(Choice::Pattern),
-                Entry::offered(Choice::PatternExternalMidi),
-            ],
-        },
-        Family {
-            name: tr("Session Player"),
-            color: GOLD,
-            glyph: Glyph::Guitar,
-            entries: vec![
-                Entry::offered(Choice::Drummer),
-                Entry::unavailable(tr("Bass Player")),
-                Entry::unavailable(tr("Keyboard Player")),
             ],
         },
         Family {
@@ -223,8 +187,9 @@ pub fn show(ctx: &egui::Context, p: &mut Project, s: &mut UiState) {
             });
             ui.add_space(12.0);
 
-            // The four cards share the width equally, with a gap between each.
-            let card_w = (content_w - 3.0 * CARD_GAP) / 4.0;
+            // The cards share the width equally, with a gap between each.
+            let cards = families.len() as f32;
+            let card_w = (content_w - (cards - 1.0) * CARD_GAP) / cards;
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = CARD_GAP;
                 for (i, family) in families.iter().enumerate() {
@@ -326,22 +291,18 @@ pub fn show(ctx: &egui::Context, p: &mut Project, s: &mut UiState) {
             }
 
             ui.add_space(14.0);
-            ui.columns(3, |cols| {
-                // The number sits in the middle column, which is as wide as the two buttons
-                // column on the right, so it stays centred in the dialog.
-                cols[1].vertical_centered(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(tr("Number of tracks to create:"));
-                        let mut count = s.new_track.count.max(1);
-                        if ui
-                            .add(egui::DragValue::new(&mut count).range(1..=64))
-                            .changed()
-                        {
-                            s.new_track.count = count;
-                        }
-                    });
-                });
-                cols[2].with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // The number of tracks on the left and the two buttons on the right: with two cards
+            // the dialog is too narrow to centre the number as Logic's wider dialog does.
+            ui.horizontal(|ui| {
+                ui.label(tr("Number of tracks to create:"));
+                let mut count = s.new_track.count.max(1);
+                if ui
+                    .add(egui::DragValue::new(&mut count).range(1..=64))
+                    .changed()
+                {
+                    s.new_track.count = count;
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let create_button =
                         egui::Button::new(RichText::new(tr("Create")).color(Color32::WHITE))
                             .fill(BLUE)
@@ -454,33 +415,6 @@ fn draw_glyph(painter: &Painter, c: Pos2, glyph: Glyph) {
                 Stroke::new(4.5, white),
             );
         }
-        Glyph::Grid => {
-            // A rounded square holding a 3 by 3 grid of dots, like a drum pad.
-            let square = Rect::from_center_size(c, vec2(26.0, 26.0));
-            painter.rect_stroke(square, 4.0, Stroke::new(2.0, white), StrokeKind::Inside);
-            for row in 0..3 {
-                for col in 0..3 {
-                    let dot = pos2(
-                        square.left() + 6.5 + 6.5 * col as f32,
-                        square.top() + 6.5 + 6.5 * row as f32,
-                    );
-                    painter.circle_filled(dot, 2.2, white);
-                }
-            }
-        }
-        Glyph::Guitar => {
-            // A body of two overlapping discs with a neck running up to the right.
-            painter.circle_filled(pos2(c.x - 5.0, c.y + 6.0), 7.5, white);
-            painter.circle_filled(pos2(c.x + 3.0, c.y + 1.0), 6.0, white);
-            painter.line_segment(
-                [pos2(c.x + 4.0, c.y), pos2(c.x + 15.0, c.y - 11.0)],
-                Stroke::new(3.0, white),
-            );
-            painter.line_segment(
-                [pos2(c.x + 15.0, c.y - 11.0), pos2(c.x + 18.0, c.y - 14.0)],
-                Stroke::new(4.5, white),
-            );
-        }
         Glyph::Wave => {
             // Five vertical bars of rising and falling height, a short audio waveform.
             for (dx, half_height) in [
@@ -509,10 +443,7 @@ mod tests {
     #[test]
     fn each_choice_creates_its_track_kind() {
         assert_eq!(Choice::SoftwareInstrument.kind(), TrackKind::Instrument);
-        assert_eq!(Choice::Pattern.kind(), TrackKind::Instrument);
         assert_eq!(Choice::ExternalMidi.kind(), TrackKind::ExternalMidi);
-        assert_eq!(Choice::PatternExternalMidi.kind(), TrackKind::ExternalMidi);
-        assert_eq!(Choice::Drummer.kind(), TrackKind::Drummer);
         assert_eq!(Choice::AudioMic.kind(), TrackKind::Audio);
         assert_eq!(Choice::AudioGuitar.kind(), TrackKind::Audio);
     }
