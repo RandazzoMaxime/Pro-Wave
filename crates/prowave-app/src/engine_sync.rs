@@ -1085,6 +1085,7 @@ mod tests {
             monitor: false,
             input: prowave_engine::InputSource::Mono(0),
             output: 0,
+            aux_bus: 0,
             volume_db: 0.0,
             pan: 0.0,
             inserts: vec![],
@@ -1157,11 +1158,18 @@ mod tests {
         let r = route_of(&p, 0);
         assert_eq!((r.bus_in, r.sends[0].bus, r.sends[0].pre), (0, 2, true));
         assert_eq!(r.sends[1].bus, 0, "an empty slot sends nothing");
-        // More than eight Aux strips: the ninth hears no bus.
+        // Each Aux strip hears the bus of its rank, well past the eighth.
         for _ in 0..8 {
             p.add_track(TrackKind::Aux);
         }
-        assert_eq!(p.aux_bus_of(p.tracks.len() - 1), 0);
+        assert_eq!(p.aux_bus_of(p.tracks.len() - 1), 10);
+        // An Aux strip made for a bus hears that one, and does not count in the ranks.
+        assert_eq!(p.add_aux_for_bus(200), Some(p.tracks.len() - 1));
+        assert_eq!(p.aux_bus_of(p.tracks.len() - 1), 200);
+        assert_eq!(p.add_aux_for_bus(200), None, "the bus has its Aux strip");
+        assert_eq!(p.add_aux_for_bus(10), None, "the tenth Aux strip hears it");
+        p.add_track(TrackKind::Aux);
+        assert_eq!(p.aux_bus_of(p.tracks.len() - 1), 11);
 
         // Automation: the lanes sent are what the project has, and the comparison knows it.
         assert!(automation_unchanged(&p, &[]));

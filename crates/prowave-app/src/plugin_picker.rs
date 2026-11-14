@@ -92,9 +92,12 @@ pub fn show(ui: &mut Ui, recent: &[Pick], filled: bool) -> Option<Choice> {
     let catalog = crate::plugins::catalog();
     ui.set_min_width(200.0);
     let mut choice = None;
-    // Logic marks the empty slot's entry with a check mark; a filled slot has none.
-    let check = if filled { "    " } else { "✔  " };
-    if ui.button(format!("{check}{}", tr("No Plug-in"))).clicked() {
+    // Logic marks the empty slot's entry with a check mark; here it is selected, as the
+    // checked entries of the other menus are (the built-in font has no check mark).
+    if ui
+        .add(egui::Button::selectable(!filled, tr("No Plug-in")))
+        .clicked()
+    {
         choice = Some(Choice::NoPlugin);
     }
     ui.separator();

@@ -1443,7 +1443,7 @@ fn shot_flex_scene(app: &mut App, ctx: &egui::Context, kind: &str) {
 /// working, and automation in its different modes. `mixfx` also opens the compressor's window,
 /// `mixeq` the Channel EQ's, `mixspace` the Space Designer's and `mixauto` the Automation editor;
 /// `mixplugin` puts a hosted plug-in on a strip and opens its window, `mixplugins` opens the
-/// Plugin Manager.
+/// Plugin Manager, `mixnewtrack` the Create New Track dialog.
 fn shot_mixer_scene(app: &mut App, kind: &str) {
     use model::{AutoMode, AutoTarget, Insert, SendSlot, TrackKind};
     use prowave_engine::FxKind;
@@ -1578,6 +1578,7 @@ fn shot_mixer_scene(app: &mut App, kind: &str) {
             }
         }
         "plugins" => app.ui.show_plugin_manager = true,
+        "newtrack" => app.ui.new_track.open(),
         "auto" => {
             app.ui.mixer.auto_editor.track = Some(piano_t);
             app.ui.mixer.auto_editor.span = 72.0;

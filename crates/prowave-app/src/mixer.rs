@@ -86,7 +86,7 @@ pub struct MixerView {
     /// The Automation editor window.
     pub auto_editor: crate::automation::AutoEditor,
     /// Sends on Faders: the bus whose send levels the faders set.
-    pub sends_on_faders: Option<u8>,
+    pub sends_on_faders: Option<u16>,
     /// Edit > Copy Channel Strip.
     pub copied: Option<CopiedStrip>,
     /// A strip's MIDI FX slot was clicked: the MIDI FX window opens (the Mixer and the
@@ -723,9 +723,9 @@ pub fn panel_height(room: f32, p: &Project, v: &MixerView) -> f32 {
     usual.max(min_panel_height(p, v)).min(room.max(0.0))
 }
 
-/// The Aux strips and the bus each listens to, as (bus, name) for the send menus' "Bus N → name"
+/// The Aux strips and the bus each listens to, as (bus, name) for the send menus' "Bus N › name"
 /// lines. An Aux past the last bus listens to none and is left out.
-fn aux_bus_names(p: &Project) -> Vec<(u8, String)> {
+fn aux_bus_names(p: &Project) -> Vec<(u16, String)> {
     p.tracks
         .iter()
         .enumerate()
@@ -735,10 +735,10 @@ fn aux_bus_names(p: &Project) -> Vec<(u8, String)> {
         .collect()
 }
 
-/// A bus in the send menus: "Bus N", or "Bus N → name" when an Aux strip listens to it.
-fn bus_label(bus: u8, aux: &[(u8, String)]) -> String {
+/// A bus in the send menus: "Bus N", or "Bus N › name" when an Aux strip listens to it.
+fn bus_label(bus: u16, aux: &[(u16, String)]) -> String {
     match aux.iter().find(|(b, _)| *b == bus) {
-        Some((_, name)) => trf("Bus {} → {}", &[&bus, name]),
+        Some((_, name)) => trf("Bus {} › {}", &[&bus, name]),
         None => trf("Bus {}", &[&bus]),
     }
 }
@@ -749,6 +749,9 @@ fn send_menu_line(ui: &mut Ui, enabled: bool, checked: bool, text: &str) -> bool
         .clicked()
 }
 
+/// The buses the Bus menu lists itself, and that each of its submenus holds.
+const BUS_MENU_PAGE: usize = 32;
+
 /// Logic's send menu, the same for a filled slot and an empty one. `edit` is the slot's send,
 /// None when the slot is empty; the menu changes it, and a bus picked in an empty slot makes a
 /// new send (level 0.5, post-fader). `aux` names the buses and `on_faders` is the Mixer's
@@ -756,8 +759,8 @@ fn send_menu_line(ui: &mut Ui, enabled: bool, checked: bool, text: &str) -> bool
 fn send_menu(
     ui: &mut Ui,
     edit: &mut Option<SendSlot>,
-    aux: &[(u8, String)],
-    on_faders: &mut Option<u8>,
+    aux: &[(u16, String)],
+    on_faders: &mut Option<u16>,
 ) {
     ui.set_min_width(190.0);
     let filled = *edit;
@@ -807,21 +810,36 @@ fn send_menu(
     ui.separator();
     ui.menu_button(tr("Bus"), |ui| {
         ui.set_min_width(190.0);
-        for bus in (1..=prowave_engine::MAX_BUSES).map(|b| b as u8) {
-            let current = edit.and_then(|s| s.bus);
-            if send_menu_line(ui, true, current == Some(bus), &bus_label(bus, aux)) {
-                match edit {
-                    Some(s) => s.bus = Some(bus),
-                    None => {
-                        *edit = Some(SendSlot {
-                            bus: Some(bus),
-                            level: 0.5,
-                            pre: false,
-                        })
+        // Logic's Bus menu: the first 32 buses, then the rest in submenus of 32.
+        let mut lines = |ui: &mut Ui, range: std::ops::RangeInclusive<usize>| {
+            for bus in range.map(|b| b as u16) {
+                let current = edit.and_then(|s| s.bus);
+                if send_menu_line(ui, true, current == Some(bus), &bus_label(bus, aux)) {
+                    match edit {
+                        Some(s) => s.bus = Some(bus),
+                        None => {
+                            *edit = Some(SendSlot {
+                                bus: Some(bus),
+                                level: 0.5,
+                                pre: false,
+                            })
+                        }
                     }
+                    ui.close();
                 }
-                ui.close();
             }
+        };
+        let last = prowave_engine::MAX_BUSES;
+        lines(ui, 1..=BUS_MENU_PAGE.min(last));
+        if last > BUS_MENU_PAGE {
+            ui.separator();
+        }
+        for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
+            let end = (first + BUS_MENU_PAGE - 1).min(last);
+            ui.menu_button(format!("{first} - {end}"), |ui| {
+                ui.set_min_width(190.0);
+                lines(ui, first..=end);
+            });
         }
     });
     ui.separator();
@@ -848,8 +866,8 @@ fn send_slots(
     sends: &mut Vec<SendSlot>,
     uid: egui::Id,
     inactive: bool,
-    aux: &[(u8, String)],
-    on_faders: &mut Option<u8>,
+    aux: &[(u16, String)],
+    on_faders: &mut Option<u16>,
 ) {
     let mut remove = None;
     for k in 0..rows {
@@ -897,8 +915,8 @@ fn send_slot(
     send: &mut crate::model::SendSlot,
     uid: egui::Id,
     inactive: bool,
-    aux: &[(u8, String)],
-    on_faders: &mut Option<u8>,
+    aux: &[(u16, String)],
+    on_faders: &mut Option<u16>,
 ) -> bool {
     let Some(bus) = send.bus else {
         return false;
@@ -1535,6 +1553,10 @@ pub fn channel_strip(
             // An Aux strip takes its signal from a bus: it has no sends of its own.
             StripKey::Track(i) if p.tracks[i].kind != TrackKind::Aux => {
                 let area = row(r.sends, 16.0);
+                let buses = |t: &crate::model::Track| -> Vec<Option<u16>> {
+                    t.sends.iter().map(|s| s.bus).collect()
+                };
+                let before = buses(&p.tracks[i]);
                 send_slots(
                     ui,
                     g,
@@ -1547,6 +1569,15 @@ pub fn channel_strip(
                     &aux,
                     &mut v.sends_on_faders,
                 );
+                // A send that was just pointed at a bus nothing listens to gets its Aux strip,
+                // as in Logic. Only a change made here does: a project that came with such a
+                // send keeps it as it is.
+                let after = buses(&p.tracks[i]);
+                if after != before {
+                    for bus in after.into_iter().flatten() {
+                        p.add_aux_for_bus(bus);
+                    }
+                }
             }
             StripKey::StereoOut => slot(g, row(r.sends, 16.0), "", SLOT_EMPTY, TEXT),
             _ => {}
@@ -1670,7 +1701,7 @@ pub fn channel_strip(
         }
         _ => None,
     };
-    let send_db = |sends: &[SendSlot], bus: u8| {
+    let send_db = |sends: &[SendSlot], bus: u16| {
         let level = sends
             .iter()
             .find(|s| s.bus == Some(bus))
@@ -1829,7 +1860,7 @@ pub fn channel_strip(
 
 /// Sets the send to `bus` from a fader position in dB (a new send is made when needed, and
 /// one turned right down is taken away).
-fn set_send_level(sends: &mut Vec<SendSlot>, bus: u8, db: f32) {
+fn set_send_level(sends: &mut Vec<SendSlot>, bus: u16, db: f32) {
     let level = if db <= -59.5 {
         0.0
     } else {
@@ -1916,7 +1947,7 @@ fn output_slot(
             p.tracks[i].output = 0;
             ui.close();
         }
-        for bus in 1..=prowave_engine::MAX_BUSES as u8 {
+        for bus in 1..=prowave_engine::MAX_BUSES as u16 {
             if ui
                 .selectable_label(current == bus, trf("Bus {}", &[&bus]))
                 .clicked()
@@ -2333,7 +2364,7 @@ fn fit_toolbar(menus_end: f32, center: f32, right_end: f32, filters_w: f32) -> T
     }
 }
 
-fn draw_sends_on_faders(ui: &Ui, g: &egui::Painter, x: f32, cy: f32, bus: &mut Option<u8>) {
+fn draw_sends_on_faders(ui: &Ui, g: &egui::Painter, x: f32, cy: f32, bus: &mut Option<u16>) {
     const NS: &str = "mixer_toolbar";
     // Sends on Faders: the faders set the sends to a bus.
     g.text(
@@ -2364,7 +2395,7 @@ fn draw_sends_on_faders(ui: &Ui, g: &egui::Painter, x: f32, cy: f32, bus: &mut O
             *bus = None;
             ui.close();
         }
-        for b in 1..=8u8 {
+        for b in 1..=8u16 {
             if ui
                 .selectable_label(*bus == Some(b), trf("Bus {}", &[&b]))
                 .clicked()
@@ -2853,7 +2884,7 @@ mod tests {
             aux,
             vec![(1, "Aux 1".to_string()), (2, "Aux 2".to_string())]
         );
-        assert_eq!(bus_label(1, &aux), "Bus 1 → Aux 1");
+        assert_eq!(bus_label(1, &aux), "Bus 1 › Aux 1");
         assert_eq!(bus_label(3, &aux), "Bus 3");
     }
 
