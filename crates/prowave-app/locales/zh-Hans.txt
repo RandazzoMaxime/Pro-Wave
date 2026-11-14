@@ -837,3 +837,6 @@ Create = 创建
 Details = 详细信息
 No Plug-in = 无插件
 MIDI FX = MIDI 效果
+Plug-in not found = 未找到插件
+Not found = 未找到
+In Use = 使用中

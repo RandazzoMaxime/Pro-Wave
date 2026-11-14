@@ -837,3 +837,6 @@ Create = बनाएँ
 Details = विवरण
 No Plug-in = कोई प्लग-इन नहीं
 MIDI FX = MIDI FX
+Plug-in not found = प्लग-इन नहीं मिला
+Not found = नहीं मिला
+In Use = उपयोग में

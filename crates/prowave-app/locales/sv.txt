@@ -837,3 +837,6 @@ Create = Skapa
 Details = Detaljer
 No Plug-in = Inget insticksprogram
 MIDI FX = MIDI-effekter
+Plug-in not found = Plugin hittades inte
+Not found = Hittades inte
+In Use = I bruk

@@ -837,3 +837,6 @@ Create = Luo
 Details = Tiedot
 No Plug-in = Ei liitännäistä
 MIDI FX = MIDI-tehosteet
+Plug-in not found = Liitännäistä ei löytynyt
+Not found = Ei löytynyt
+In Use = Käytössä

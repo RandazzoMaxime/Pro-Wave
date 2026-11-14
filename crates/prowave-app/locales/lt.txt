@@ -837,3 +837,6 @@ Create = Sukurti
 Details = Detalės
 No Plug-in = Be įskiepio
 MIDI FX = MIDI efektai
+Plug-in not found = Papildinys nerastas
+Not found = Nerasta
+In Use = Naudojami

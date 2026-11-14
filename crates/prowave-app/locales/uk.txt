@@ -837,3 +837,6 @@ Create = Створити
 Details = Деталі
 No Plug-in = Без плагіна
 MIDI FX = MIDI-ефекти
+Plug-in not found = Плагін не знайдено
+Not found = Не знайдено
+In Use = Використовуються

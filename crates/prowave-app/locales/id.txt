@@ -837,3 +837,6 @@ Create = Buat
 Details = Detail
 No Plug-in = Tanpa Plug-in
 MIDI FX = MIDI FX
+Plug-in not found = Plug-in tidak ditemukan
+Not found = Tidak ditemukan
+In Use = Digunakan

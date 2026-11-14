@@ -40,6 +40,9 @@ const STRIP_SEL: Color32 = Color32::from_rgb(0x4d, 0x4d, 0x4d);
 const SLOT_EMPTY: Color32 = Color32::from_rgb(0x2c, 0x2c, 0x2c);
 const SLOT_GRAY: Color32 = Color32::from_rgb(0x55, 0x55, 0x55);
 const PLUGIN_BLUE: Color32 = Color32::from_rgb(0x36, 0x6f, 0xd2);
+/// A plug-in in a project that is not installed here: its slot keeps its name and passes the
+/// sound through, and the orange says so.
+pub const PLUGIN_NOT_FOUND: Color32 = Color32::from_rgb(0xe0, 0x8a, 0x1c);
 /// A strip that makes no sound (muted, or another track is soloed): instruments, plug-ins
 /// and sends turn grey, and so do the meters.
 const PLUGIN_OFF: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x4a);
@@ -1019,15 +1022,10 @@ fn insert_slot(
     let have = strip_inserts(p, i).get(k).copied();
     let count = strip_inserts(p, i).len();
     let off = have.is_some_and(|fx| inactive || fx.bypass);
+    let missing = have.is_some_and(|fx| fx.plugin != 0 && crate::plugins::missing(fx.plugin));
     let ink = if off { TEXT_DIM } else { Color32::WHITE };
     match have {
-        Some(fx) => slot(
-            g,
-            r,
-            fx.name(),
-            if off { PLUGIN_OFF } else { PLUGIN_BLUE },
-            ink,
-        ),
+        Some(fx) => slot(g, r, fx.name(), insert_fill(off, missing), ink),
         None => slot(g, r, "", SLOT_EMPTY, TEXT),
     }
     if k > count || (have.is_none() && count >= prowave_engine::MAX_INSERTS) {
@@ -1055,6 +1053,12 @@ fn insert_slot(
             let power = ui.interact(left, uid.with("power"), Sense::click());
             let open = ui.interact(middle, uid.with("open"), Sense::click());
             let menu = ui.interact(right, uid.with("menu"), Sense::click());
+            if missing {
+                let note = missing_note(fx.plugin);
+                for resp in [&power, &open, &menu] {
+                    resp.clone().on_hover_text(note.clone());
+                }
+            }
             let glyph = Stroke::new(1.2, ink);
             if power.hovered() {
                 let c = left.center();
@@ -1095,6 +1099,33 @@ fn insert_slot(
     if let Some(act) = act {
         apply_insert(p, v, i, k, act);
     }
+}
+
+/// The fill of a filled Audio FX slot. Bypass or silence wins over a missing plug-in: a slot
+/// that makes no sound is grey whether or not its plug-in is installed.
+fn insert_fill(off: bool, missing: bool) -> Color32 {
+    if off {
+        PLUGIN_OFF
+    } else if missing {
+        PLUGIN_NOT_FOUND
+    } else {
+        PLUGIN_BLUE
+    }
+}
+
+/// What the hover text of a slot whose plug-in is not installed says: that, and what the
+/// project knows of the plug-in (its manufacturer and format).
+fn missing_note(plugin: u32) -> String {
+    let mut note = tr("Plug-in not found").to_string();
+    if let Some(info) = crate::plugins::info(plugin) {
+        let known: Vec<&str> = [info.vendor.as_str(), info.format.name()]
+            .into_iter()
+            .filter(|text| !text.is_empty())
+            .collect();
+        note.push('\n');
+        note.push_str(&known.join(" · "));
+    }
+    note
 }
 
 /// What a choice in the plug-in menu of an Audio FX slot does: on a filled slot a plug-in
@@ -2988,5 +3019,21 @@ mod tests {
             !strip_visible(TrackKind::Folder, &all),
             "a folder has no channel strip"
         );
+    }
+
+    #[test]
+    fn a_plug_in_that_is_not_installed_is_orange_unless_it_is_silent() {
+        assert_eq!(insert_fill(false, false), PLUGIN_BLUE);
+        assert_eq!(insert_fill(false, true), PLUGIN_NOT_FOUND);
+        assert_eq!(
+            (
+                PLUGIN_NOT_FOUND.r(),
+                PLUGIN_NOT_FOUND.g(),
+                PLUGIN_NOT_FOUND.b()
+            ),
+            (0xe0, 0x8a, 0x1c)
+        );
+        assert_eq!(insert_fill(true, true), PLUGIN_OFF, "bypass wins");
+        assert_eq!(insert_fill(true, false), PLUGIN_OFF);
     }
 }

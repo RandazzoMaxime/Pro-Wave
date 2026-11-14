@@ -837,3 +837,6 @@ Create = Gumawa
 Details = Mga Detalye
 No Plug-in = Walang Plug-in
 MIDI FX = MIDI FX
+Plug-in not found = Hindi nahanap ang plug-in
+Not found = Hindi nahanap
+In Use = Ginagamit
