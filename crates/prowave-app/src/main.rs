@@ -38,6 +38,7 @@ mod mixer;
 mod model;
 mod mtc_in;
 mod native_menu;
+mod native_popup;
 mod new_track_dialog;
 mod note_edit;
 mod patches;

@@ -13,6 +13,7 @@
 //! [`channel_strip`] is also used by the Inspector's two strips.
 use crate::i18n::{tr, trf};
 use crate::model::{AutoMode, AutoTarget, Insert, Project, SendSlot, TrackKind, MAX_SENDS};
+use crate::native_popup::Item;
 use crate::widgets::{
     back_chevron, menu_title, popup_button, stroke, todo_item, BLUE, TEXT, TEXT_DIM,
 };
@@ -743,114 +744,110 @@ fn bus_label(bus: u16, aux: &[(u16, String)]) -> String {
     }
 }
 
-/// One line of the send menu: checked or not, greyed out unless `enabled`. True when clicked.
-fn send_menu_line(ui: &mut Ui, enabled: bool, checked: bool, text: &str) -> bool {
-    ui.add_enabled(enabled, egui::Button::selectable(checked, text))
-        .clicked()
-}
-
 /// The buses the Bus menu lists itself, and that each of its submenus holds.
 const BUS_MENU_PAGE: usize = 32;
 
-/// Logic's send menu, the same for a filled slot and an empty one. `edit` is the slot's send,
-/// None when the slot is empty; the menu changes it, and a bus picked in an empty slot makes a
-/// new send (level 0.5, post-fader). `aux` names the buses and `on_faders` is the Mixer's
-/// Sends on Faders bus.
-fn send_menu(
-    ui: &mut Ui,
-    edit: &mut Option<SendSlot>,
+/// What the user chose in a send's menu.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SendAct {
+    /// The line that names the send's bus: there to be read.
+    Keep,
+    PostFader,
+    PreFader,
+    NoSend,
+    Bus(u16),
+    OnFaders,
+}
+
+/// Logic's send menu, the same for a filled slot and an empty one (`send` is `None`): the
+/// send's bus and the Aux strip that listens to it, where the send is taken, No Send, the
+/// buses, Sends on Faders. `aux` names the buses and `on_faders` is the Mixer's Sends on Faders
+/// bus. What Logic has and Pro Wave does not yet is listed greyed out.
+fn send_menu_items(
+    send: Option<SendSlot>,
     aux: &[(u16, String)],
-    on_faders: &mut Option<u16>,
-) {
-    ui.set_min_width(190.0);
-    let filled = *edit;
-    if let Some(bus) = filled.and_then(|s| s.bus) {
-        if send_menu_line(ui, true, true, &bus_label(bus, aux)) {
-            ui.close();
-        }
-        ui.separator();
+    on_faders: Option<u16>,
+) -> Vec<Item<SendAct>> {
+    let bus = send.and_then(|s| s.bus);
+    let filled = send.is_some();
+    let mut items = Vec::new();
+    if let Some(bus) = bus {
+        items.push(Item::checked(bus_label(bus, aux), true, SendAct::Keep));
+        items.push(Item::Separator);
     }
-    // Not implemented yet, so they only show what Logic's menu has.
-    send_menu_line(ui, false, false, tr("Independent Pan"));
-    ui.separator();
-    send_menu_line(ui, false, false, tr("Post Pan"));
-    if send_menu_line(
-        ui,
-        filled.is_some(),
-        filled.is_some_and(|s| !s.pre),
-        tr("Post Fader"),
-    ) {
-        if let Some(s) = edit {
-            s.pre = false;
-        }
-        ui.close();
+    items.push(Item::disabled(tr("Independent Pan"), SendAct::Keep));
+    items.push(Item::Separator);
+    items.push(Item::disabled(tr("Post Pan"), SendAct::Keep));
+    let post = send.is_some_and(|s| !s.pre);
+    let pre = send.is_some_and(|s| s.pre);
+    items.push(Item::checked(tr("Post Fader"), post, SendAct::PostFader).enabled(filled));
+    items.push(Item::checked(tr("Pre Fader"), pre, SendAct::PreFader).enabled(filled));
+    items.push(Item::Separator);
+    items.push(Item::action(tr("No Send"), SendAct::NoSend).enabled(filled));
+    items.push(Item::Separator);
+    // Logic's Bus menu: the first 32 buses, then the rest in submenus of 32.
+    let lines = |range: std::ops::RangeInclusive<usize>| -> Vec<Item<SendAct>> {
+        range
+            .map(|b| b as u16)
+            .map(|b| Item::checked(bus_label(b, aux), bus == Some(b), SendAct::Bus(b)))
+            .collect()
+    };
+    let last = prowave_engine::MAX_BUSES;
+    let mut buses = lines(1..=BUS_MENU_PAGE.min(last));
+    if last > BUS_MENU_PAGE {
+        buses.push(Item::Separator);
     }
-    if send_menu_line(
-        ui,
-        filled.is_some(),
-        filled.is_some_and(|s| s.pre),
-        tr("Pre Fader"),
-    ) {
-        if let Some(s) = edit {
-            s.pre = true;
-        }
-        ui.close();
+    for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
+        let end = (first + BUS_MENU_PAGE - 1).min(last);
+        buses.push(Item::sub(format!("{first} - {end}"), lines(first..=end)));
     }
-    ui.separator();
-    if send_menu_line(ui, filled.is_some(), false, tr("No Send")) {
-        // A send that is taken away stops being the Sends on Faders bus too.
-        if let Some(bus) = filled.and_then(|s| s.bus) {
-            if *on_faders == Some(bus) {
+    items.push(Item::sub(tr("Bus"), buses));
+    items.push(Item::Separator);
+    items.push(Item::disabled(tr("Copy Fader to Send"), SendAct::Keep));
+    let sending = bus.is_some_and(|b| on_faders == Some(b));
+    items.push(
+        Item::checked(tr("Sends on Faders"), sending, SendAct::OnFaders).enabled(bus.is_some()),
+    );
+    items
+}
+
+/// Carries out a choice of the send menu on the slot's send (`None`: an empty slot, or the
+/// send taken away). A bus picked in an empty slot makes a new send (level 0.5, post-fader).
+fn apply_send(act: SendAct, send: &mut Option<SendSlot>, on_faders: &mut Option<u16>) {
+    let bus = send.and_then(|s| s.bus);
+    match act {
+        SendAct::Keep => {}
+        SendAct::PostFader | SendAct::PreFader => {
+            if let Some(s) = send {
+                s.pre = act == SendAct::PreFader;
+            }
+        }
+        SendAct::NoSend => {
+            // A send that is taken away stops being the Sends on Faders bus too.
+            if bus.is_some() && *on_faders == bus {
                 *on_faders = None;
             }
+            *send = None;
         }
-        *edit = None;
-        ui.close();
-    }
-    ui.separator();
-    ui.menu_button(tr("Bus"), |ui| {
-        ui.set_min_width(190.0);
-        // Logic's Bus menu: the first 32 buses, then the rest in submenus of 32.
-        let mut lines = |ui: &mut Ui, range: std::ops::RangeInclusive<usize>| {
-            for bus in range.map(|b| b as u16) {
-                let current = edit.and_then(|s| s.bus);
-                if send_menu_line(ui, true, current == Some(bus), &bus_label(bus, aux)) {
-                    match edit {
-                        Some(s) => s.bus = Some(bus),
-                        None => {
-                            *edit = Some(SendSlot {
-                                bus: Some(bus),
-                                level: 0.5,
-                                pre: false,
-                            })
-                        }
-                    }
-                    ui.close();
-                }
+        SendAct::Bus(bus) => match send {
+            Some(s) => s.bus = Some(bus),
+            None => {
+                *send = Some(SendSlot {
+                    bus: Some(bus),
+                    level: 0.5,
+                    pre: false,
+                })
             }
-        };
-        let last = prowave_engine::MAX_BUSES;
-        lines(ui, 1..=BUS_MENU_PAGE.min(last));
-        if last > BUS_MENU_PAGE {
-            ui.separator();
+        },
+        SendAct::OnFaders => {
+            if let Some(bus) = bus {
+                *on_faders = if *on_faders == Some(bus) {
+                    None
+                } else {
+                    Some(bus)
+                };
+            }
         }
-        for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
-            let end = (first + BUS_MENU_PAGE - 1).min(last);
-            ui.menu_button(format!("{first} - {end}"), |ui| {
-                ui.set_min_width(190.0);
-                lines(ui, first..=end);
-            });
-        }
-    });
-    ui.separator();
-    ui.add_enabled(false, egui::Button::new(tr("Copy Fader to Send")));
-    let on_bus = filled.and_then(|s| s.bus);
-    let sending = on_bus.is_some_and(|b| *on_faders == Some(b));
-    if send_menu_line(ui, on_bus.is_some(), sending, tr("Sends on Faders")) {
-        if let Some(bus) = on_bus {
-            *on_faders = if sending { None } else { Some(bus) };
-        }
-        ui.close();
     }
 }
 
@@ -892,7 +889,11 @@ fn send_slots(
             let resp = ui.interact(r, uid.with(("empty", k)), Sense::click());
             slot(g, r, "", SLOT_EMPTY, TEXT);
             let mut picked = None;
-            egui::Popup::menu(&resp).show(|ui| send_menu(ui, &mut picked, aux, on_faders));
+            let choice =
+                crate::native_popup::menu(&resp, || send_menu_items(None, aux, *on_faders));
+            if let Some(act) = choice {
+                apply_send(act, &mut picked, on_faders);
+            }
             if let Some(send) = picked {
                 sends.push(send);
             }
@@ -939,7 +940,10 @@ fn send_slot(
         g.circle_filled(c, 1.6, Color32::WHITE);
     }
     let mut edit = Some(*send);
-    egui::Popup::menu(&resp).show(|ui| send_menu(ui, &mut edit, aux, on_faders));
+    let choice = crate::native_popup::menu(&resp, || send_menu_items(Some(*send), aux, *on_faders));
+    if let Some(act) = choice {
+        apply_send(act, &mut edit, on_faders);
+    }
     match edit {
         Some(changed) => *send = changed,
         None => keep = false,
@@ -970,6 +974,7 @@ fn send_slot(
 }
 
 /// What the user chose in an Audio FX slot's menu.
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum InsertAct {
     Add(Insert),
     Replace(Insert),
@@ -1032,7 +1037,12 @@ fn insert_slot(
     match have {
         None => {
             let resp = ui.interact(r, uid, Sense::click());
-            egui::Popup::menu(&resp).show(|ui| act = plugin_menu(ui, v, false));
+            let recent = v.recent_picks.clone();
+            let choice =
+                crate::native_popup::menu(&resp, || crate::plugin_picker::items(&recent, false));
+            if let Some(choice) = choice {
+                act = Some(plugin_choice(v, choice, false));
+            }
         }
         Some(fx) => {
             // The zones do not overlap, so each click reaches exactly one of them.
@@ -1067,17 +1077,18 @@ fn insert_slot(
                 v.fx_window = Some((i, k));
                 v.plugin_controls = false;
             }
-            egui::Popup::menu(&menu).show(|ui| {
-                if let Some(a) = plugin_menu(ui, v, true) {
-                    act = Some(a);
-                }
-            });
+            let recent = v.recent_picks.clone();
+            let choice =
+                crate::native_popup::menu(&menu, || crate::plugin_picker::items(&recent, true));
+            if let Some(choice) = choice {
+                act = Some(plugin_choice(v, choice, true));
+            }
             for resp in [&power, &open, &menu] {
-                egui::Popup::context_menu(resp).show(|ui| {
-                    if let Some(a) = slot_menu(ui, fx, k, count) {
-                        act = Some(a);
-                    }
-                });
+                let picked =
+                    crate::native_popup::context_menu(resp, || slot_menu_items(fx, k, count));
+                if picked.is_some() {
+                    act = picked;
+                }
             }
         }
     }
@@ -1086,12 +1097,14 @@ fn insert_slot(
     }
 }
 
-/// The plug-in menu of an Audio FX slot: the picker, with "No Plug-in" first. On a filled slot
-/// a choice replaces its plug-in and "No Plug-in" removes it.
-fn plugin_menu(ui: &mut Ui, v: &mut MixerView, filled: bool) -> Option<InsertAct> {
-    let choice = crate::plugin_picker::show(ui, &v.recent_picks, filled)?;
-    ui.close();
-    Some(match choice {
+/// What a choice in the plug-in menu of an Audio FX slot does: on a filled slot a plug-in
+/// replaces the one there and "No Plug-in" removes it. The choice joins the recent ones.
+fn plugin_choice(
+    v: &mut MixerView,
+    choice: crate::plugin_picker::Choice,
+    filled: bool,
+) -> InsertAct {
+    match choice {
         crate::plugin_picker::Choice::NoPlugin => InsertAct::Remove,
         crate::plugin_picker::Choice::Pick(pick) => {
             crate::plugin_picker::remember(&mut v.recent_picks, pick.clone());
@@ -1102,44 +1115,22 @@ fn plugin_menu(ui: &mut Ui, v: &mut MixerView, filled: bool) -> Option<InsertAct
                 InsertAct::Add(insert)
             }
         }
-    })
+    }
 }
 
 /// The right-click menu of a filled Audio FX slot: the actions Logic's slot menu has no place
 /// for.
-fn slot_menu(ui: &mut Ui, fx: Insert, k: usize, count: usize) -> Option<InsertAct> {
-    let mut act = None;
-    ui.set_min_width(150.0);
-    if ui.button(tr("Open")).clicked() {
-        act = Some(InsertAct::Open);
-        ui.close();
+fn slot_menu_items(fx: Insert, k: usize, count: usize) -> Vec<Item<InsertAct>> {
+    let mut items = vec![Item::action(tr("Open"), InsertAct::Open)];
+    if fx.plugin != 0 {
+        items.push(Item::action(tr("Controls"), InsertAct::Controls));
     }
-    if fx.plugin != 0 && ui.button(tr("Controls")).clicked() {
-        act = Some(InsertAct::Controls);
-        ui.close();
-    }
-    if ui.selectable_label(fx.bypass, tr("Bypass")).clicked() {
-        act = Some(InsertAct::Bypass);
-        ui.close();
-    }
-    ui.add_enabled_ui(k > 0, |ui| {
-        if ui.button(tr("Move Up")).clicked() {
-            act = Some(InsertAct::Move(-1));
-            ui.close();
-        }
-    });
-    ui.add_enabled_ui(k + 1 < count, |ui| {
-        if ui.button(tr("Move Down")).clicked() {
-            act = Some(InsertAct::Move(1));
-            ui.close();
-        }
-    });
-    ui.separator();
-    if ui.button(tr("Remove")).clicked() {
-        act = Some(InsertAct::Remove);
-        ui.close();
-    }
-    act
+    items.push(Item::checked(tr("Bypass"), fx.bypass, InsertAct::Bypass));
+    items.push(Item::action(tr("Move Up"), InsertAct::Move(-1)).enabled(k > 0));
+    items.push(Item::action(tr("Move Down"), InsertAct::Move(1)).enabled(k + 1 < count));
+    items.push(Item::Separator);
+    items.push(Item::action(tr("Remove"), InsertAct::Remove));
+    items
 }
 
 /// A new effect for a picker choice: one of Pro Wave's own, or a hosted plug-in, which joins
@@ -1251,20 +1242,21 @@ fn automation_slot(
     let resp = ui.interact(r, uid, Sense::click());
     let mut picked = None;
     let mut open_editor = false;
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(150.0);
-        for m in AutoMode::ALL {
-            if ui.selectable_label(m == mode, tr(m.label())).clicked() {
-                picked = Some(m);
-                ui.close();
-            }
-        }
-        ui.separator();
-        if ui.button(tr("Show Automation")).clicked() {
-            open_editor = true;
-            ui.close();
-        }
+    // `None` is Show Automation; the modes are the other lines.
+    let choice = crate::native_popup::menu(&resp, || {
+        let mut items: Vec<Item<Option<AutoMode>>> = AutoMode::ALL
+            .into_iter()
+            .map(|m| Item::checked(tr(m.label()), m == mode, Some(m)))
+            .collect();
+        items.push(Item::Separator);
+        items.push(Item::action(tr("Show Automation"), None));
+        items
     });
+    match choice {
+        Some(Some(m)) => picked = Some(m),
+        Some(None) => open_editor = true,
+        None => {}
+    }
     if let Some(m) = picked {
         let beat = p.position_beats;
         crate::automation::set_mode(&mut p.tracks[i], m, beat);
@@ -1883,37 +1875,42 @@ fn set_send_level(sends: &mut Vec<SendSlot>, bus: u16, db: f32) {
 /// A strip's Setting slot: copy, paste or clear what is on the strip.
 fn setting_menu(ui: &Ui, r: Rect, p: &mut Project, v: &mut MixerView, i: usize, id: egui::Id) {
     let resp = ui.interact(r, id, Sense::click());
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(170.0);
-        let t = &mut p.tracks[i];
-        if ui.button(tr("Copy Channel Strip")).clicked() {
+    // 0 copies the strip, 1 pastes the copied one, 2 resets it.
+    let can_paste = v.copied.is_some();
+    let choice = crate::native_popup::menu(&resp, || {
+        vec![
+            Item::action(tr("Copy Channel Strip"), 0u8),
+            Item::action(tr("Paste Channel Strip"), 1u8).enabled(can_paste),
+            Item::Separator,
+            Item::action(tr("Reset Channel Strip"), 2u8),
+        ]
+    });
+    let t = &mut p.tracks[i];
+    match choice {
+        Some(0) => {
             v.copied = Some(CopiedStrip {
                 inserts: t.inserts.clone(),
                 sends: t.sends.clone(),
                 volume_db: t.volume_db,
                 pan: t.pan,
             });
-            ui.close();
         }
-        let paste = egui::Button::new(tr("Paste Channel Strip"));
-        if ui.add_enabled(v.copied.is_some(), paste).clicked() {
+        Some(1) => {
             if let Some(c) = v.copied.clone() {
                 t.inserts = c.inserts;
                 t.sends = c.sends;
                 t.volume_db = c.volume_db;
                 t.pan = c.pan;
             }
-            ui.close();
         }
-        ui.separator();
-        if ui.button(tr("Reset Channel Strip")).clicked() {
+        Some(2) => {
             t.inserts.clear();
             t.sends.clear();
             t.volume_db = 0.0;
             t.pan = 0.0;
-            ui.close();
         }
-    });
+        _ => {}
+    }
 }
 
 /// A strip's Output slot: Stereo Out or a bus (an Aux strip plays that bus). An Aux strip
@@ -1938,25 +1935,29 @@ fn output_slot(
         return;
     }
     let resp = ui.interact(r, id, Sense::click());
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(120.0);
-        if ui
-            .selectable_label(current == 0, tr("Stereo Out"))
-            .clicked()
-        {
-            p.tracks[i].output = 0;
-            ui.close();
+    // Stereo Out (0), then the buses as the send menu lists them: 32, then submenus of 32.
+    let choice = crate::native_popup::menu(&resp, || {
+        let lines = |range: std::ops::RangeInclusive<usize>| -> Vec<Item<u16>> {
+            range
+                .map(|b| b as u16)
+                .map(|b| Item::checked(trf("Bus {}", &[&b]), current == b, b))
+                .collect()
+        };
+        let last = prowave_engine::MAX_BUSES;
+        let mut items = vec![Item::checked(tr("Stereo Out"), current == 0, 0u16)];
+        items.extend(lines(1..=BUS_MENU_PAGE.min(last)));
+        if last > BUS_MENU_PAGE {
+            items.push(Item::Separator);
         }
-        for bus in 1..=prowave_engine::MAX_BUSES as u16 {
-            if ui
-                .selectable_label(current == bus, trf("Bus {}", &[&bus]))
-                .clicked()
-            {
-                p.tracks[i].output = bus;
-                ui.close();
-            }
+        for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
+            let end = (first + BUS_MENU_PAGE - 1).min(last);
+            items.push(Item::sub(format!("{first} - {end}"), lines(first..=end)));
         }
+        items
     });
+    if let Some(bus) = choice {
+        p.tracks[i].output = bus;
+    }
 }
 
 /// An audio strip's Input slot: which inputs the track records, and from which device.
@@ -1985,42 +1986,48 @@ fn input_slot(
     }
     let channels = inputs.channels();
     let (mut picked, mut device) = (None, None);
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(150.0);
-        let mut item = |ui: &mut Ui, s: InputSource| {
-            if ui.selectable_label(s == source, input_label(s)).clicked() {
-                picked = Some(s);
-                ui.close();
-            }
-        };
-        for c in 0..channels {
-            item(ui, InputSource::Mono(c));
+    /// A line of the input menu: an input of the device, or the device itself (`None`: the
+    /// system's default).
+    #[derive(Clone)]
+    enum Pick {
+        Source(InputSource),
+        Device(Option<String>),
+    }
+    let choice = crate::native_popup::menu(&resp, || {
+        let line = |s: InputSource| Item::checked(input_label(s), s == source, Pick::Source(s));
+        let mut items: Vec<Item<Pick>> =
+            (0..channels).map(|c| line(InputSource::Mono(c))).collect();
+        items.push(Item::Separator);
+        items.extend(
+            (0..channels.saturating_sub(1))
+                .step_by(2)
+                .map(|c| line(InputSource::Stereo(c))),
+        );
+        items.push(Item::Separator);
+        let mut devices = vec![Item::checked(
+            tr("System Default"),
+            inputs.device.is_none(),
+            Pick::Device(None),
+        )];
+        for d in &inputs.devices {
+            let on = inputs.device.as_deref() == Some(d.id.as_str());
+            devices.push(Item::checked(
+                d.name.clone(),
+                on,
+                Pick::Device(Some(d.id.clone())),
+            ));
         }
-        ui.separator();
-        for c in (0..channels.saturating_sub(1)).step_by(2) {
-            item(ui, InputSource::Stereo(c));
+        if inputs.devices.is_empty() {
+            devices.push(Item::Label(tr("No audio input found").to_string()));
         }
-        ui.separator();
-        ui.menu_button(tr("Input Device"), |ui| {
-            if ui
-                .selectable_label(inputs.device.is_none(), tr("System Default"))
-                .clicked()
-            {
-                device = Some(None);
-                ui.close();
-            }
-            for d in &inputs.devices {
-                let on = inputs.device.as_deref() == Some(d.id.as_str());
-                if ui.selectable_label(on, &d.name).clicked() {
-                    device = Some(Some(d.id.clone()));
-                    ui.close();
-                }
-            }
-            if inputs.devices.is_empty() {
-                ui.label(tr("No audio input found"));
-            }
-        });
+        items.push(Item::sub(tr("Input Device"), devices));
+        items
     });
+    match choice {
+        Some(Pick::Source(s)) => picked = Some(s),
+        Some(Pick::Device(d)) => device = Some(d),
+        None => {}
+    }
     if let Some(s) = picked {
         p.tracks[i].input = s;
     }
@@ -2061,55 +2068,79 @@ fn group_slot(ui: &Ui, g: &Painter, r: Rect, p: &mut Project, i: usize, id: egui
     let mut new_group = false;
     let mut delete = None;
     let names: Vec<String> = p.groups.iter().map(|g| g.name.clone()).collect();
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(150.0);
-        if ui
-            .selectable_label(group.is_none(), tr("No Group"))
-            .clicked()
-        {
-            group_pick = Some(None);
-            ui.close();
-        }
+    /// A line of the Group menu.
+    #[derive(Clone, Copy)]
+    enum Pick {
+        Group(Option<usize>),
+        NewGroup,
+        /// One of the things a group moves together: volume, pan, mute, solo (0 to 3).
+        Link(u8),
+        Delete(usize),
+        Vca(Option<usize>),
+    }
+    let links = group.map(|k| {
+        let g = &p.groups[k];
+        [g.volume, g.pan, g.mute, g.solo]
+    });
+    let choice = crate::native_popup::menu(&resp, || {
+        let mut items = vec![Item::checked(
+            tr("No Group"),
+            group.is_none(),
+            Pick::Group(None),
+        )];
         for (k, name) in names.iter().enumerate() {
-            if ui.selectable_label(group == Some(k), name).clicked() {
-                group_pick = Some(Some(k));
-                ui.close();
-            }
+            items.push(Item::checked(
+                name.clone(),
+                group == Some(k),
+                Pick::Group(Some(k)),
+            ));
         }
-        if ui.button(tr("New Group")).clicked() {
-            new_group = true;
-            ui.close();
-        }
-        if let Some(k) = group {
-            ui.menu_button(tr("Group Settings"), |ui| {
-                let grp = &mut p.groups[k];
-                ui.checkbox(&mut grp.volume, tr("Volume"));
-                ui.checkbox(&mut grp.pan, tr("Pan"));
-                ui.checkbox(&mut grp.mute, tr("Mute"));
-                ui.checkbox(&mut grp.solo, tr("Solo"));
-            });
-            if ui.button(tr("Delete Group")).clicked() {
-                delete = Some(k);
-                ui.close();
-            }
+        items.push(Item::action(tr("New Group"), Pick::NewGroup));
+        if let (Some(k), Some(links)) = (group, links) {
+            let settings = ["Volume", "Pan", "Mute", "Solo"]
+                .into_iter()
+                .zip(links)
+                .enumerate()
+                .map(|(n, (name, on))| Item::checked(tr(name), on, Pick::Link(n as u8)))
+                .collect();
+            items.push(Item::sub(tr("Group Settings"), settings));
+            items.push(Item::action(tr("Delete Group"), Pick::Delete(k)));
         }
         if !vcas.is_empty() {
-            ui.separator();
-            if ui
-                .selectable_label(current.is_none(), tr("No VCA"))
-                .clicked()
-            {
-                picked = Some(None);
-                ui.close();
-            }
+            items.push(Item::Separator);
+            items.push(Item::checked(
+                tr("No VCA"),
+                current.is_none(),
+                Pick::Vca(None),
+            ));
             for (j, name) in &vcas {
-                if ui.selectable_label(current == Some(*j), name).clicked() {
-                    picked = Some(Some(*j));
-                    ui.close();
-                }
+                items.push(Item::checked(
+                    name.clone(),
+                    current == Some(*j),
+                    Pick::Vca(Some(*j)),
+                ));
             }
         }
+        items
     });
+    match choice {
+        Some(Pick::Group(pick)) => group_pick = Some(pick),
+        Some(Pick::NewGroup) => new_group = true,
+        Some(Pick::Link(n)) => {
+            if let Some(g) = group.and_then(|k| p.groups.get_mut(k)) {
+                let flag = match n {
+                    0 => &mut g.volume,
+                    1 => &mut g.pan,
+                    2 => &mut g.mute,
+                    _ => &mut g.solo,
+                };
+                *flag = !*flag;
+            }
+        }
+        Some(Pick::Delete(k)) => delete = Some(k),
+        Some(Pick::Vca(vca)) => picked = Some(vca),
+        None => {}
+    }
     if let Some(vca) = picked {
         p.assign_vca(i, vca);
     }

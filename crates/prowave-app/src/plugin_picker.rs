@@ -7,8 +7,8 @@
 //! follow in a submenu for each format, from the catalog in `crate::plugins`. Every plug-in is a
 //! submenu with one entry, "Stereo", as in Logic: the entry is what picks it.
 use crate::i18n::tr;
+use crate::native_popup::Item;
 use crate::plugins::{Format, PluginInfo, Scan};
-use egui::Ui;
 use prowave_engine::FxKind;
 
 /// Logic's Audio FX categories, in the order of its menu.
@@ -83,88 +83,81 @@ fn label(pick: &Pick) -> &str {
     }
 }
 
-/// Draws the menu into `ui` and returns the choice, if the user made one. `recent` is the list
-/// of recent picks (most recent first) and `filled` says whether the slot already has a
-/// plug-in, which decides where the check mark of "No Plug-in" goes.
-pub fn show(ui: &mut Ui, recent: &[Pick], filled: bool) -> Option<Choice> {
+/// The menu's lines, top to bottom as in Logic: "No Plug-in" (checked on an empty slot; on a
+/// `filled` one it empties the slot), the `recent` picks, the categories of Pro Wave's own
+/// effects, then the installed plug-ins by format and manufacturer. Every plug-in is a submenu
+/// with the one entry "Stereo", which is what picks it.
+pub fn items(recent: &[Pick], filled: bool) -> Vec<Item<Choice>> {
     // The first time a menu opens, the installed plug-ins are listed in the background.
     crate::plugins::scan(false);
     let catalog = crate::plugins::catalog();
-    ui.set_min_width(200.0);
-    let mut choice = None;
-    // Logic marks the empty slot's entry with a check mark; here it is selected, as the
-    // checked entries of the other menus are (the built-in font has no check mark).
-    if ui
-        .add(egui::Button::selectable(!filled, tr("No Plug-in")))
-        .clicked()
-    {
-        choice = Some(Choice::NoPlugin);
-    }
-    ui.separator();
+    let mut items = vec![
+        Item::checked(tr("No Plug-in"), !filled, Choice::NoPlugin),
+        Item::Separator,
+    ];
     if !recent.is_empty() {
-        ui.weak(tr("Recent"));
-        for pick in recent {
-            leaf(ui, label(pick), pick, &mut choice);
-        }
-        ui.separator();
+        items.push(Item::Label(tr("Recent").to_string()));
+        items.extend(recent.iter().map(|pick| leaf(label(pick), pick)));
+        items.push(Item::Separator);
     }
     for name in CATEGORIES {
-        let kinds: Vec<FxKind> = FxKind::ALL
+        let effects: Vec<Item<Choice>> = FxKind::ALL
             .iter()
             .copied()
             .filter(|kind| category(*kind) == name)
+            .map(|kind| leaf(kind.name(), &Pick::Effect(kind)))
             .collect();
-        ui.add_enabled_ui(!kinds.is_empty(), |ui| {
-            ui.menu_button(tr(name), |ui| {
-                for kind in kinds {
-                    leaf(ui, kind.name(), &Pick::Effect(kind), &mut choice);
-                }
-            });
-        });
+        // A category with no effect yet is shown greyed rather than hidden, which keeps the
+        // list as Logic's.
+        let enabled = !effects.is_empty();
+        items.push(Item::sub(tr(name), effects).enabled(enabled));
     }
-    hosted_menus(ui, &catalog, &mut choice);
-    choice
-}
-
-/// A plug-in's submenu with its one entry, "Stereo"; choosing that entry picks the plug-in.
-fn leaf(ui: &mut Ui, text: &str, pick: &Pick, choice: &mut Option<Choice>) {
-    ui.menu_button(text, |ui| {
-        if ui.button(tr("Stereo")).clicked() {
-            *choice = Some(Choice::Pick(pick.clone()));
-        }
-    });
-}
-
-/// The installed plug-ins below the categories: a submenu for each format, then one for each
-/// manufacturer, as Logic's "Audio Units" submenu has.
-fn hosted_menus(ui: &mut Ui, catalog: &[PluginInfo], choice: &mut Option<Choice>) {
     if matches!(crate::plugins::scan_status(), Scan::Running(..)) {
-        ui.separator();
-        ui.weak(tr("Scanning plug-ins…"));
+        items.push(Item::Separator);
+        items.push(Item::Label(tr("Scanning plug-ins…").to_string()));
     }
     if catalog.is_empty() {
-        return;
+        return items;
     }
-    ui.separator();
+    items.push(Item::Separator);
     for format in FORMATS {
         let of_format: Vec<&PluginInfo> = catalog.iter().filter(|i| i.format == format).collect();
         if of_format.is_empty() {
             continue;
         }
-        ui.menu_button(format.name(), |ui| {
-            // The catalog is sorted by manufacturer, so each one's plug-ins are together.
-            for group in of_format.chunk_by(|a, b| a.vendor.eq_ignore_ascii_case(&b.vendor)) {
+        // The catalog is sorted by manufacturer, so each one's plug-ins are together.
+        let vendors = of_format
+            .chunk_by(|a, b| a.vendor.eq_ignore_ascii_case(&b.vendor))
+            .map(|group| {
                 let vendor = match group[0].vendor.as_str() {
                     "" => "—",
                     vendor => vendor,
                 };
-                ui.menu_button(vendor, |ui| {
-                    for info in group {
-                        leaf(ui, &info.name, &Pick::Plugin((*info).clone()), choice);
-                    }
-                });
-            }
-        });
+                let plugins = group
+                    .iter()
+                    .map(|info| leaf(&info.name, &Pick::Plugin((*info).clone())))
+                    .collect();
+                Item::sub(vendor, plugins)
+            })
+            .collect();
+        items.push(Item::sub(format_menu(format), vendors));
+    }
+    items
+}
+
+/// A plug-in's submenu with its one entry, "Stereo"; choosing that entry picks the plug-in.
+fn leaf(text: &str, pick: &Pick) -> Item<Choice> {
+    Item::sub(
+        text,
+        vec![Item::action(tr("Stereo"), Choice::Pick(pick.clone()))],
+    )
+}
+
+/// The name of a format's submenu: Logic's "Audio Units" for that format.
+fn format_menu(format: Format) -> &'static str {
+    match format {
+        Format::AudioUnit => "Audio Units",
+        other => other.name(),
     }
 }
 

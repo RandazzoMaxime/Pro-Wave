@@ -194,7 +194,10 @@ mod mac {
             let (tx, events) = mpsc::channel();
             let wake = ctx.clone();
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
-                let _ = tx.send(e.id.0);
+                // A line of a pop-up menu (a slot's menu) goes to the widget that opened it.
+                if !crate::native_popup::route(&e.id.0) {
+                    let _ = tx.send(e.id.0);
+                }
                 wake.request_repaint();
             }));
 
