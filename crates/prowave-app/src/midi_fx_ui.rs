@@ -10,7 +10,7 @@ use crate::step_editor::NOTE_NAMES;
 use crate::UiState;
 use egui::{ComboBox, DragValue, Ui};
 
-fn title(fx: &MidiFx) -> &'static str {
+pub(crate) fn title(fx: &MidiFx) -> &'static str {
     match fx {
         MidiFx::Scripter { .. } => tr("Scripter"),
         MidiFx::Modulator { .. } => tr("Modulator"),
