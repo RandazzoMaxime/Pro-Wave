@@ -861,4 +861,5 @@ The audio region {} names no file in the project, so it is skipped = Ljudregione
 The volumes were not read from the Logic Pro project, so the tracks stay at 0 dB = Volymerna lästes inte från Logic Pro-projektet, så spåren står kvar på 0 dB
 Mute, solo and plug-in bypass were not read from the Logic Pro project, so they are all off = Ljud av, solo och bypass för insticksprogram lästes inte från Logic Pro-projektet, så allt är avstängt
 The positions of the regions were not read from the Logic Pro project, so each one starts at bar 1 = Regionernas lägen lästes inte från Logic Pro-projektet, så var och en börjar på takt 1
-The track playing {} is not read from the Logic Pro project, so it is on a track of its own = Spåret som spelar upp {} lästes inte från Logic Pro-projektet, så det ligger på ett eget spår
+The audio region {} is not placed in the project, so it is skipped = Ljudregionen {} är inte placerad i projektet, så den hoppas över
+The audio file {} plays on no track that is imported, so it is on a track of its own = Ljudfilen {} spelas inte upp av något importerat spår, så det ligger på ett eget spår

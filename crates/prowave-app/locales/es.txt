@@ -861,4 +861,5 @@ The audio region {} names no file in the project, so it is skipped = La región 
 The volumes were not read from the Logic Pro project, so the tracks stay at 0 dB = Los volúmenes no se leyeron del proyecto de Logic Pro, así que las pistas se quedan en 0 dB
 Mute, solo and plug-in bypass were not read from the Logic Pro project, so they are all off = Silenciar, solo y el bypass de los plug-ins no se leyeron del proyecto de Logic Pro, así que están todos desactivados
 The positions of the regions were not read from the Logic Pro project, so each one starts at bar 1 = Las posiciones de las regiones no se leyeron del proyecto de Logic Pro, así que cada una empieza en el compás 1
-The track playing {} is not read from the Logic Pro project, so it is on a track of its own = La pista que reproduce {} no se lee del proyecto de Logic Pro, así que está en una pista propia
+The audio region {} is not placed in the project, so it is skipped = La región de audio {} no está colocada en el proyecto, así que se omite
+The audio file {} plays on no track that is imported, so it is on a track of its own = El archivo de audio {} no se reproduce en ninguna pista importada, así que está en una pista propia
