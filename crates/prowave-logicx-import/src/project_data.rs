@@ -11,7 +11,9 @@
 //! The record shapes come from the real Logic Pro 11 project studied in
 //! `LOGICX-FORMAT-SPEC.md` ("What the real file shows").
 
-use crate::model::{AudioRegion, MidiNote, MidiRegion, PluginFormat, PluginSlot, Track, TrackKind};
+use crate::model::{
+    AudioFileInfo, AudioRegion, MidiNote, MidiRegion, PluginFormat, PluginSlot, Track, TrackKind,
+};
 use crate::{Error, MAX_PLIST_BYTES};
 use plist::{Dictionary, Value};
 
@@ -61,12 +63,20 @@ const XML_START: &[u8] = b"<?xml";
 /// The end of an XML property list.
 const XML_END: &[u8] = b"</plist>";
 
-/// The tag of a sequence record, stored reversed: `qeSM` is `MSeq`. The sequence carries its
-/// track's name in its first bytes.
+/// The tag of a sequence record, stored reversed: `qeSM` is `MSeq`. The record carries its
+/// track's name, and the start and length of the region it plays.
 const SEQUENCE_TAG: &[u8; 4] = b"qeSM";
 
 /// How far into a sequence record the track name is searched for.
 const SEQUENCE_WINDOW: usize = 0x80;
+
+/// Where a sequence record stores its name's length (`u16`), and where the name starts.
+const SEQUENCE_NAME_LENGTH_AT: usize = 0x34;
+
+/// The name length a sequence record must have for its length field (at 0x78) to be read. The
+/// field moves with the name length, and only this length was checked against the real file.
+const SEQUENCE_LENGTH_CHECKED_NAME_LENGTH: usize = 6;
+const SEQUENCE_LENGTH_AT: usize = 0x78;
 
 /// The tag of a channel record, stored reversed: `OCuA` is `AuCO`.
 const CHANNEL_RECORD_TAG: &[u8; 4] = b"OCuA";
@@ -83,19 +93,73 @@ const CHANNEL_PAN_AT: usize = 125;
 /// The tag of an audio region record, stored reversed: `gRuA` is `AuRg`.
 const AUDIO_REGION_TAG: &[u8; 4] = b"gRuA";
 
-/// The size of an audio region record. Two records of the real project sit 248 bytes apart.
+/// The size of an audio region record, which is the 36-byte header plus the payload. Two records
+/// of the real project sit 248 bytes apart.
 const AUDIO_REGION_BYTES: usize = 248;
 
-/// The offset of the region name's length (a `u16`) in an audio region record; the name
-/// follows it at 0x70.
-const AUDIO_REGION_NAME_LENGTH_AT: usize = 0x6E;
+/// The payload offset of the length in frames (`u32`), and of the name length (`u16`) and name.
+/// The writer's documentation gives payload offsets; the records here are read from their start,
+/// so the 36-byte header is added.
+const HEADER_BYTES: usize = 0x24;
+const AUDIO_REGION_FRAMES_AT: usize = HEADER_BYTES + 0x16;
+const AUDIO_REGION_NAME_LENGTH_AT: usize = HEADER_BYTES + 0x4A;
+const AUDIO_REGION_NAME_AT: usize = HEADER_BYTES + 0x4C;
 
-/// The offset of the region name in an audio region record.
-const AUDIO_REGION_NAME_AT: usize = 0x70;
+/// The tag of a file reference, stored reversed: `lFuA` is `AuFl`. Its payload holds the file name
+/// as a count of UTF-16 characters (`u16` at payload 0x08) and then the characters.
+const FILE_REFERENCE_TAG: &[u8; 4] = b"lFuA";
+const FILE_NAME_LENGTH_AT: usize = HEADER_BYTES + 0x08;
+const FILE_NAME_AT: usize = HEADER_BYTES + 0x0A;
+const MAX_FILE_NAME_CHARS: usize = 255;
 
-/// The tick every note time is measured from. The real project's notes, at 240 ticks per beat,
-/// start on beat 2, beat 3 and bar 2 beat 1 of a region that starts at this tick: the same
-/// beats as the piano roll the user showed. The region's own start is not located in the file.
+/// The tag of an audio descriptor. `EVAW` is `WAVE`, the container of the file. Its frames are
+/// at +0x0c, the sample rate at +0x14, the channels (`u16`) at +0x18 and the bits at +0x1a.
+const AUDIO_DESCRIPTOR_TAG: &[u8; 4] = b"EVAW";
+
+/// The tick origin of the placement events: a region at tick `t` is stored at `34560 + t`.
+const PLACEMENT_ORIGIN: u64 = 34_560;
+
+/// The first byte of a placement event: `0x24` for an audio region, `0x20` for a MIDI region.
+const PLACEMENT_AUDIO_MARKER: u32 = 0x24;
+const PLACEMENT_MIDI_MARKER: u32 = 0x20;
+
+/// The offsets in a placement event: the position (`u32`), the track (1-based, `u8`), and the
+/// link to the region (`u32`, a region index times four). Each event has the byte 0x89 at 0x17.
+const PLACEMENT_POSITION_AT: usize = 0x04;
+const PLACEMENT_TRACK_AT: usize = 0x14;
+const PLACEMENT_KIND_AT: usize = 0x17;
+const PLACEMENT_LINK_AT: usize = 0x2C;
+const PLACEMENT_KIND_VALUE: u8 = 0x89;
+
+/// The tag of an arrange row, stored reversed: `karT` is `Trak`. A row is 93 bytes: its ordinal
+/// (`u8` at 0x12, the track number minus one) and its channel index (`u32` at 0x2a, the channel
+/// index times 0x40000).
+const ARRANGE_ROW_TAG: &[u8; 4] = b"karT";
+const ARRANGE_ROW_BYTES: usize = 93;
+const ARRANGE_ORDINAL_AT: usize = 0x12;
+const ARRANGE_CHANNEL_AT: usize = 0x2A;
+const CHANNEL_INDEX_UNIT: u32 = 0x40000;
+const MAX_ARRANGE_ORDINAL: u8 = 8;
+
+/// The tag of a channel object, stored reversed. Its index (`u32` at 0x08, times 0x40000) and
+/// its name (`u16` length at 0xc2, then ASCII at 0xc4) name the channel.
+const CHANNEL_OBJECT_TAG: &[u8; 4] = b"ivnE";
+const CHANNEL_OBJECT_INDEX_AT: usize = 0x08;
+const CHANNEL_OBJECT_NAME_LENGTH_AT: usize = 0xC2;
+const CHANNEL_OBJECT_NAME_AT: usize = 0xC4;
+
+/// The tag and the offsets of a note record. A note is a 32-byte event: `0x90` as a `u32` at
+/// 0x00, its position (`38400 + region-relative tick`) at 0x04, its velocity (`u8`) at 0x0b, its
+/// pitch (`u8`) at 0x0c, the byte `0x89` at 0x17 and its length (`u32`) at 0x1c.
+const NOTE_ON: u32 = 0x90;
+const NOTE_START_AT: usize = 0x04;
+const NOTE_VELOCITY_AT: usize = 0x0B;
+const NOTE_PITCH_AT: usize = 0x0C;
+const NOTE_KIND_AT: usize = 0x17;
+const NOTE_LENGTH_AT: usize = 0x1C;
+
+/// The tick every note position is measured from. A note's position is 38400 plus its tick
+/// from the region start, as the reference writer documents.
 const NOTE_ORIGIN: u64 = 38_400;
 
 /// Most sequence records read from one project.
@@ -106,6 +170,9 @@ const MAX_NOTES: usize = 65_536;
 
 /// Most audio region records read from one project.
 const MAX_AUDIO_REGIONS: usize = 4096;
+
+/// Most placement events read from one project.
+const MAX_PLACEMENTS: usize = 4096;
 
 /// The first four bytes of a Logic project file.
 const MAGIC: [u8; 4] = [0x23, 0x47, 0xC0, 0xAB];
@@ -118,6 +185,8 @@ pub(crate) struct Assembly {
     pub(crate) unassigned: Vec<PluginSlot>,
     /// The audio region records, in file order.
     pub(crate) audio_regions: Vec<AudioRegion>,
+    /// The audio files the regions play.
+    pub(crate) audio_files: Vec<AudioFileInfo>,
 }
 
 /// Reads the whole of `data` into tracks, plug-ins and regions. `audio_files` are the file
@@ -140,6 +209,7 @@ pub(crate) fn assemble(data: &[u8], path: &str, audio_files: &[String]) -> Resul
             solo: None,
             plugins: Vec::new(),
             midi_regions: Vec::new(),
+            audio_regions: Vec::new(),
             instrument_files: Vec::new(),
         })
         .collect();
@@ -213,13 +283,13 @@ pub(crate) fn assemble(data: &[u8], path: &str, audio_files: &[String]) -> Resul
         track.fader_raw = fader;
         track.pan = pan;
     }
-    attach_midi(data, &strips, &mut tracks);
-    let audio_regions = audio_regions(data, audio_files);
+    let regions = attach_regions(data, &strips, &mut tracks, audio_files);
 
     Ok(Assembly {
         tracks,
         unassigned,
-        audio_regions,
+        audio_regions: regions.audio,
+        audio_files: regions.files,
     })
 }
 
@@ -240,22 +310,84 @@ fn channel_record_values(data: &[u8], strip_offset: usize) -> (Option<u8>, Optio
     (fader, pan)
 }
 
-/// Groups the note records by the sequence record before them, and gives each group to the
-/// track whose name the sequence carries. Times are measured from [`NOTE_ORIGIN`].
-fn attach_midi(data: &[u8], strips: &[Strip], tracks: &mut [Track]) {
+/// The regions of a project and the audio files they play.
+pub(crate) struct Regions {
+    /// Every audio region record, in file order. The placed ones carry their start.
+    pub(crate) audio: Vec<AudioRegion>,
+    /// The audio file, when the file reference and its descriptor are there.
+    pub(crate) files: Vec<AudioFileInfo>,
+}
+
+/// Attaches the regions to their tracks. A placement event names its track by an arrange-row
+/// number (1-based), the row names a channel, and the channel names the track. An audio region
+/// is placed through its link (the region index times four); a MIDI region's notes follow its
+/// sequence record, and its start is its track's MIDI placement.
+fn attach_regions(
+    data: &[u8],
+    strips: &[Strip],
+    tracks: &mut [Track],
+    audio_files: &[String],
+) -> Regions {
+    let names = channel_names(data);
+    let arrange = arrange_channels(data, &names);
+    let track_name = |number: u8| -> Option<String> {
+        let ordinal = usize::from(number.checked_sub(1)?);
+        let index = arrange.get(ordinal).copied().flatten()?;
+        names
+            .iter()
+            .find(|(known, _)| *known == index)
+            .map(|(_, name)| name.clone())
+    };
+    let placements = placements(data);
+
+    let mut audio: Vec<AudioRegion> = audio_region_records(data)
+        .into_iter()
+        .map(|record| {
+            let base = strip_region_suffix(&record.name);
+            let file = audio_files
+                .iter()
+                .find(|file| file_stem(file) == base)
+                .cloned();
+            AudioRegion {
+                name: record.name,
+                file,
+                start_tick: None,
+                length_frames: Some(record.frames),
+                length_ticks: None,
+            }
+        })
+        .collect();
+
+    for placement in placements.iter().filter(|p| p.audio) {
+        let Ok(index) = usize::try_from(placement.link / 4) else {
+            continue;
+        };
+        let Some(start) = placement.position.checked_sub(PLACEMENT_ORIGIN) else {
+            continue;
+        };
+        let Some(region) = audio.get_mut(index) else {
+            continue;
+        };
+        region.start_tick = Some(start);
+        let Some(name) = track_name(placement.track) else {
+            continue;
+        };
+        if let Some(track) = tracks.iter_mut().find(|track| track.name == name) {
+            track.audio_regions.push(region.clone());
+        }
+    }
+
+    // The note records, grouped by the sequence record before them.
     let sequences = sequence_offsets(data);
     let mut groups: Vec<(usize, Vec<MidiNote>)> = Vec::new();
     for note in note_records(data) {
         let Some(&sequence) = sequences.iter().rev().find(|&&at| at < note.offset) else {
             continue;
         };
-        let Some(start_tick) = note.tick.checked_sub(NOTE_ORIGIN) else {
-            continue;
-        };
         let midi = MidiNote {
             pitch: note.pitch,
             velocity: note.velocity,
-            start_tick,
+            start_tick: note.tick,
             length_ticks: note.length,
         };
         match groups.iter_mut().find(|(at, _)| *at == sequence) {
@@ -268,15 +400,25 @@ fn attach_midi(data: &[u8], strips: &[Strip], tracks: &mut [Track]) {
             continue;
         };
         notes.sort_by_key(|note| note.start_tick);
-        let Some(track) = tracks.iter_mut().find(|track| track.name == name) else {
-            continue;
-        };
-        track.midi_regions.push(MidiRegion {
-            name: name.clone(),
-            start_tick: None,
-            length_ticks: None,
-            notes,
-        });
+        let start = placements
+            .iter()
+            .filter(|p| !p.audio)
+            .find(|p| track_name(p.track).as_deref() == Some(name.as_str()))
+            .and_then(|p| p.position.checked_sub(PLACEMENT_ORIGIN));
+        let length = sequence_length(data, sequence);
+        if let Some(track) = tracks.iter_mut().find(|track| track.name == name) {
+            track.midi_regions.push(MidiRegion {
+                name,
+                start_tick: start,
+                length_ticks: length,
+                notes,
+            });
+        }
+    }
+
+    Regions {
+        audio,
+        files: audio_file_info(data).into_iter().collect(),
     }
 }
 
@@ -293,27 +435,6 @@ fn sequence_name(data: &[u8], sequence: usize, strips: &[Strip]) -> Option<Strin
                 .any(|at| at[..name.len()] == *name && at[name.len()] == 0)
         })
         .map(|strip| strip.name.clone())
-}
-
-/// The audio region records. Each names a file in the metadata by its stem; a `.N` suffix on
-/// the region name (a second region on the same file) is dropped before the match.
-fn audio_regions(data: &[u8], audio_files: &[String]) -> Vec<AudioRegion> {
-    audio_region_records(data)
-        .into_iter()
-        .map(|record| {
-            let base = strip_region_suffix(&record.name);
-            let file = audio_files
-                .iter()
-                .find(|file| file_stem(file) == base)
-                .cloned();
-            AudioRegion {
-                name: record.name,
-                file,
-                start_tick: None,
-                length_ticks: None,
-            }
-        })
-        .collect()
 }
 
 /// A region name without its `.N` duplicate suffix (`Inst 1_bip.1` is `Inst 1_bip`).
@@ -627,48 +748,54 @@ pub(crate) fn sampler_records(data: &[u8]) -> Vec<SamplerRecord> {
     found
 }
 
-// --- MIDI notes and audio regions -------------------------------------------------------------
+// --- MIDI notes, placements and audio regions ----------------------------------------------
 
-/// A note record: a 32-byte event whose byte 21 is `0x89`, followed by three zero bytes. Its
-/// `u16` at byte 2 is the start, the byte at 10 the pitch, the byte at 14 the velocity and the
-/// `u16` at byte 26 the length. Byte 30 is `0x90` (note on) for most notes.
+/// A note record, read from the 32-byte event the writer documents (see `NOTE_ON`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NoteRecord {
-    /// The offset of the record's first byte.
+    /// The offset of the event's first byte.
     pub(crate) offset: usize,
+    /// The position in ticks, measured from `NOTE_ORIGIN`: the region-relative tick.
     pub(crate) tick: u64,
     pub(crate) pitch: u8,
     pub(crate) velocity: u8,
     pub(crate) length: u64,
 }
 
-/// Finds the note records. A record is taken only when its pitch and velocity are MIDI values
-/// and its length is at least two ticks, so the setup records (length one) are left out.
+/// Finds the note records. A record is taken when its `0x90` head, its `0x89` kind byte and
+/// the zero bytes around it are all there, and its pitch, velocity, length and position make
+/// sense.
 pub(crate) fn note_records(data: &[u8]) -> Vec<NoteRecord> {
     let mut found = Vec::new();
-    for marker in 21..data.len() {
+    for kind in NOTE_KIND_AT..data.len() {
         if found.len() >= MAX_NOTES {
             break;
         }
-        if data.get(marker) != Some(&0x89) || data.get(marker + 1..marker + 5) != Some(&[0; 4][..])
-        {
+        if data.get(kind) != Some(&0x89) || data.get(kind + 1..kind + 5) != Some(&[0; 4][..]) {
             continue;
         }
-        let offset = marker - 21;
-        let (Some(tick), Some(&pitch), Some(&velocity), Some(length)) = (
-            read_u16(data, offset + 2),
-            data.get(offset + 10),
-            data.get(offset + 14),
-            read_u16(data, offset + 26),
+        let offset = kind - NOTE_KIND_AT;
+        if read_u32(data, offset) != Some(NOTE_ON) {
+            continue;
+        }
+        let (Some(position), Some(&pitch), Some(&velocity), Some(length)) = (
+            read_u32(data, offset + NOTE_START_AT),
+            data.get(offset + NOTE_PITCH_AT),
+            data.get(offset + NOTE_VELOCITY_AT),
+            read_u32(data, offset + NOTE_LENGTH_AT),
         ) else {
             continue;
         };
-        if pitch > 127 || !(1..=127).contains(&velocity) || length < 2 || tick == 0 {
+        let position = u64::from(position);
+        if pitch > 127 || !(1..=127).contains(&velocity) || length == 0 {
             continue;
         }
+        let Some(tick) = position.checked_sub(NOTE_ORIGIN) else {
+            continue;
+        };
         found.push(NoteRecord {
             offset,
-            tick: u64::from(tick),
+            tick,
             pitch,
             velocity,
             length: u64::from(length),
@@ -691,17 +818,26 @@ pub(crate) fn sequence_offsets(data: &[u8]) -> Vec<usize> {
     found
 }
 
+/// The length in ticks a sequence record gives, when its name is one whose offset was checked.
+pub(crate) fn sequence_length(data: &[u8], sequence: usize) -> Option<u64> {
+    let name_length = read_u16(data, sequence + SEQUENCE_NAME_LENGTH_AT)?;
+    if usize::from(name_length) != SEQUENCE_LENGTH_CHECKED_NAME_LENGTH {
+        return None;
+    }
+    read_u32(data, sequence + SEQUENCE_LENGTH_AT).map(u64::from)
+}
+
 /// An audio region record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AudioRecord {
-    /// The offset of the record's tag.
-    pub(crate) offset: usize,
     /// The region name, as stored.
     pub(crate) name: String,
+    /// The length in frames of the audio the region plays.
+    pub(crate) frames: u32,
 }
 
-/// Finds the audio region records: the tag, the version (2), then the name, a `u16` length and
-/// the name bytes at 0x70. A name that is not printable is skipped.
+/// Finds the audio region records: the tag and the version (2), the length in frames, then the
+/// name (a `u16` length and the ASCII bytes). A name that is not printable is skipped.
 pub(crate) fn audio_region_records(data: &[u8]) -> Vec<AudioRecord> {
     let mut found = Vec::new();
     for offset in 0..data.len() {
@@ -717,6 +853,9 @@ pub(crate) fn audio_region_records(data: &[u8]) -> Vec<AudioRecord> {
         if record.get(4..6) != Some(&[2, 0][..]) {
             continue;
         }
+        let Some(frames) = read_u32(record, AUDIO_REGION_FRAMES_AT) else {
+            continue;
+        };
         let Some(length) = read_u16(record, AUDIO_REGION_NAME_LENGTH_AT) else {
             continue;
         };
@@ -731,15 +870,163 @@ pub(crate) fn audio_region_records(data: &[u8]) -> Vec<AudioRecord> {
         else {
             continue;
         };
-        found.push(AudioRecord { offset, name });
+        found.push(AudioRecord { name, frames });
     }
     found
+}
+
+/// A placement event: where a region sits on a track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Placement {
+    /// The offset of the event's first byte.
+    pub(crate) offset: usize,
+    /// Whether the event places an audio region (`0x24`) or a MIDI region (`0x20`).
+    pub(crate) audio: bool,
+    /// The track, 1-based in arrange-row order.
+    pub(crate) track: u8,
+    /// The position: 34560 plus the region's start tick.
+    pub(crate) position: u64,
+    /// The region link: the region index times four (audio events).
+    pub(crate) link: u32,
+}
+
+/// Finds the placement events: a `0x24` or `0x20` marker with the byte `0x89` at 0x17.
+pub(crate) fn placements(data: &[u8]) -> Vec<Placement> {
+    let mut found = Vec::new();
+    for offset in 0..data.len() {
+        if found.len() >= MAX_PLACEMENTS {
+            break;
+        }
+        let Some(marker) = read_u32(data, offset) else {
+            continue;
+        };
+        let audio = match marker {
+            PLACEMENT_AUDIO_MARKER => true,
+            PLACEMENT_MIDI_MARKER => false,
+            _ => continue,
+        };
+        if data.get(offset + PLACEMENT_KIND_AT) != Some(&PLACEMENT_KIND_VALUE) {
+            continue;
+        }
+        let (Some(position), Some(&track), Some(link)) = (
+            read_u32(data, offset + PLACEMENT_POSITION_AT),
+            data.get(offset + PLACEMENT_TRACK_AT),
+            read_u32(data, offset + PLACEMENT_LINK_AT),
+        ) else {
+            continue;
+        };
+        found.push(Placement {
+            offset,
+            audio,
+            track,
+            position: u64::from(position),
+            link,
+        });
+    }
+    found
+}
+
+/// The channel index that each arrange ordinal (0 to 8) points at. An arrange row's channel
+/// index is only accepted when it names a channel that is in `names`, because the file also
+/// holds rows that point at the input channel and at nothing.
+pub(crate) fn arrange_channels(data: &[u8], names: &[(u32, String)]) -> Vec<Option<u32>> {
+    let mut by_ordinal: Vec<Option<u32>> = vec![None; usize::from(MAX_ARRANGE_ORDINAL) + 1];
+    for offset in 0..data.len() {
+        if data.get(offset..offset + 4) != Some(&ARRANGE_ROW_TAG[..]) {
+            continue;
+        }
+        let Some(row) = data.get(offset..offset + ARRANGE_ROW_BYTES) else {
+            continue;
+        };
+        let (Some(&ordinal), Some(channel)) = (
+            row.get(ARRANGE_ORDINAL_AT),
+            read_u32(row, ARRANGE_CHANNEL_AT),
+        ) else {
+            continue;
+        };
+        if ordinal > MAX_ARRANGE_ORDINAL || channel % CHANNEL_INDEX_UNIT != 0 {
+            continue;
+        }
+        let index = channel / CHANNEL_INDEX_UNIT;
+        let named = names.iter().any(|(known, _)| *known == index);
+        if !named {
+            continue;
+        }
+        if let Some(slot) = by_ordinal.get_mut(usize::from(ordinal)) {
+            slot.get_or_insert(index);
+        }
+    }
+    by_ordinal
+}
+
+/// The channel names the file gives, by channel index: the ASCII channel objects.
+pub(crate) fn channel_names(data: &[u8]) -> Vec<(u32, String)> {
+    let mut names = Vec::new();
+    for offset in 0..data.len() {
+        if data.get(offset..offset + 4) != Some(&CHANNEL_OBJECT_TAG[..]) {
+            continue;
+        }
+        let (Some(channel), Some(length)) = (
+            read_u32(data, offset + CHANNEL_OBJECT_INDEX_AT),
+            read_u16(data, offset + CHANNEL_OBJECT_NAME_LENGTH_AT),
+        ) else {
+            continue;
+        };
+        let length = usize::from(length);
+        if length == 0 || length > 64 || channel % CHANNEL_INDEX_UNIT != 0 {
+            continue;
+        }
+        let Some(name) = data
+            .get(offset + CHANNEL_OBJECT_NAME_AT..offset + CHANNEL_OBJECT_NAME_AT + length)
+            .filter(|bytes| bytes.iter().all(|b| (0x20..=0x7e).contains(b)))
+            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
+        else {
+            continue;
+        };
+        names.push((channel / CHANNEL_INDEX_UNIT, name));
+    }
+    names
+}
+
+/// The audio file a project plays: its name from the `lFuA` reference, and its descriptor from
+/// the `EVAW` record.
+pub(crate) fn audio_file_info(data: &[u8]) -> Option<AudioFileInfo> {
+    let reference =
+        (0..data.len()).find(|&at| data.get(at..at + 4) == Some(&FILE_REFERENCE_TAG[..]))?;
+    let count = usize::from(read_u16(data, reference + FILE_NAME_LENGTH_AT)?);
+    if count == 0 || count > MAX_FILE_NAME_CHARS {
+        return None;
+    }
+    let bytes = data.get(reference + FILE_NAME_AT..reference + FILE_NAME_AT + 2 * count)?;
+    let units: Vec<u16> = bytes
+        .iter()
+        .step_by(2)
+        .zip(bytes.iter().skip(1).step_by(2))
+        .map(|(&low, &high)| u16::from_le_bytes([low, high]))
+        .collect();
+    let name = String::from_utf16(&units).ok()?;
+
+    let descriptor =
+        (0..data.len()).find(|&at| data.get(at..at + 4) == Some(&AUDIO_DESCRIPTOR_TAG[..]))?;
+    Some(AudioFileInfo {
+        name,
+        frames: read_u32(data, descriptor + 0x0C)?,
+        sample_rate: read_u32(data, descriptor + 0x14)?,
+        channels: read_u16(data, descriptor + 0x18)?,
+        bits_per_sample: read_u16(data, descriptor + 0x1A)?,
+    })
 }
 
 /// A little-endian `u16` at `at`, if the two bytes are there.
 fn read_u16(data: &[u8], at: usize) -> Option<u16> {
     let bytes: [u8; 2] = data.get(at..at + 2)?.try_into().ok()?;
     Some(u16::from_le_bytes(bytes))
+}
+
+/// A little-endian `u32` at `at`, if the four bytes are there.
+fn read_u32(data: &[u8], at: usize) -> Option<u32> {
+    let bytes: [u8; 4] = data.get(at..at + 4)?.try_into().ok()?;
+    Some(u32::from_le_bytes(bytes))
 }
 
 // --- Audio Unit class info -------------------------------------------------------------------
@@ -981,6 +1268,49 @@ mod tests {
         };
         assert!(dict.get("FabFilterPluginState").is_some());
         assert!(dict.get("data").is_none());
+    }
+
+    /// A note event as the writer documents it, with its kind byte and the zeros around it.
+    fn note_event(position: u32, pitch: u8, velocity: u8, length: u32) -> Vec<u8> {
+        let mut event = vec![0u8; 32];
+        event[0..4].copy_from_slice(&NOTE_ON.to_le_bytes());
+        event[4..8].copy_from_slice(&position.to_le_bytes());
+        event[0x0B] = velocity;
+        event[0x0C] = pitch;
+        event[0x10] = 0x40;
+        event[0x17] = 0x89;
+        event[0x1C..0x20].copy_from_slice(&length.to_le_bytes());
+        event
+    }
+
+    #[test]
+    fn a_note_event_gives_its_pitch_velocity_and_region_relative_start() {
+        let mut data = vec![0xAAu8; 5];
+        data.extend(note_event(38_400 + 240, 59, 80, 240));
+        data.extend(note_event(38_400 + 960, 64, 63, 1920));
+        let notes = note_records(&data);
+        let summary: Vec<(u8, u8, u64, u64)> = notes
+            .iter()
+            .map(|n| (n.pitch, n.velocity, n.tick, n.length))
+            .collect();
+        assert_eq!(summary, vec![(59, 80, 240, 240), (64, 63, 960, 1920)]);
+    }
+
+    #[test]
+    fn a_placement_event_gives_its_track_position_and_link() {
+        let mut event = vec![0u8; 0x30];
+        event[0..4].copy_from_slice(&PLACEMENT_AUDIO_MARKER.to_le_bytes());
+        event[PLACEMENT_POSITION_AT..PLACEMENT_POSITION_AT + 4]
+            .copy_from_slice(&(PLACEMENT_ORIGIN as u32 + 3840).to_le_bytes());
+        event[PLACEMENT_TRACK_AT] = 3;
+        event[PLACEMENT_KIND_AT] = PLACEMENT_KIND_VALUE;
+        event[PLACEMENT_LINK_AT..PLACEMENT_LINK_AT + 4].copy_from_slice(&0u32.to_le_bytes());
+        let found = placements(&event);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].audio);
+        assert_eq!(found[0].track, 3);
+        assert_eq!(found[0].position - PLACEMENT_ORIGIN, 3840);
+        assert_eq!(found[0].link, 0);
     }
 
     #[test]
