@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = Zapisane ur
 the engine did not take the project in time; no file was written = silnik nie przyjął projektu na czas; nie zapisano żadnego pliku
 the bounce has not finished = bounce nie został zakończony
 cannot bounce: there is no audio output = nie można zrobić bounce: brak wyjścia audio
+This region plays only part of its recording, which this command cannot handle yet = Ten region odtwarza tylko część swojego nagrania, czego to polecenie jeszcze nie obsługuje

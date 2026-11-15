@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = Perangkat o
 the engine did not take the project in time; no file was written = engine tidak menerima proyek tepat waktu; tidak ada berkas yang ditulis
 the bounce has not finished = bounce belum selesai
 cannot bounce: there is no audio output = tidak dapat bounce: tidak ada output audio
+This region plays only part of its recording, which this command cannot handle yet = Region ini hanya memutar sebagian dari rekamannya, yang belum bisa ditangani perintah ini

@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = Den lagrede
 the engine did not take the project in time; no file was written = motoren tok ikke imot prosjektet i tide; ingen fil ble skrevet
 the bounce has not finished = bounce er ikke ferdig
 cannot bounce: there is no audio output = kan ikke bounce: ingen lydutgang
+This region plays only part of its recording, which this command cannot handle yet = Denne regionen spiller bare en del av opptaket sitt, noe denne kommandoen ikke kan håndtere ennå

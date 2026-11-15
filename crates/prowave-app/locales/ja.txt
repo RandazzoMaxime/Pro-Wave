@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = 保存さ�
 the engine did not take the project in time; no file was written = エンジンがプロジェクトを時間内に受け取れなかったため、ファイルは書き出されませんでした
 the bounce has not finished = バウンスはまだ終わっていません
 cannot bounce: there is no audio output = バウンスできません: オーディオ出力がありません
+This region plays only part of its recording, which this command cannot handle yet = このリージョンは録音の一部だけを再生するため、このコマンドはまだ扱えません

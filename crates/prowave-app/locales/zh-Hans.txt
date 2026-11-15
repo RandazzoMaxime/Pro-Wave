@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = 已保存�
 the engine did not take the project in time; no file was written = 引擎未能及时接收工程；未写入任何文件
 the bounce has not finished = 导出尚未完成
 cannot bounce: there is no audio output = 无法导出：没有音频输出
+This region plays only part of its recording, which this command cannot handle yet = 此区域只播放其录音的一部分，此命令暂时还无法处理

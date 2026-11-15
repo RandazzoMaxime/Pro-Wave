@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = सहे�
 the engine did not take the project in time; no file was written = इंजन ने प्रोजेक्ट समय पर स्वीकार नहीं किया; कोई फ़ाइल नहीं लिखी गई
 the bounce has not finished = बाउंस अभी पूरा नहीं हुआ है
 cannot bounce: there is no audio output = बाउंस नहीं हो सकता: कोई ऑडियो आउटपुट नहीं है
+This region plays only part of its recording, which this command cannot handle yet = यह रीजन अपनी रिकॉर्डिंग का केवल एक हिस्सा चलाता है, जिसे यह कमांड अभी तक नहीं संभाल सकता

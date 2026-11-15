@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = Le périph�
 the engine did not take the project in time; no file was written = le moteur n'a pas pris le projet à temps ; aucun fichier n'a été écrit
 the bounce has not finished = le bounce n'est pas terminé
 cannot bounce: there is no audio output = impossible de faire le bounce : aucune sortie audio
+This region plays only part of its recording, which this command cannot handle yet = Cette région ne joue qu'une partie de son enregistrement, que cette commande ne gère pas encore

@@ -898,3 +898,4 @@ The saved output device is not available; using the system default = El disposit
 the engine did not take the project in time; no file was written = el motor no aceptó el proyecto a tiempo; no se escribió ningún archivo
 the bounce has not finished = el bounce aún no ha terminado
 cannot bounce: there is no audio output = no se puede hacer el bounce: no hay salida de audio
+This region plays only part of its recording, which this command cannot handle yet = Esta región reproduce solo una parte de su grabación, algo que este comando todavía no puede manejar
