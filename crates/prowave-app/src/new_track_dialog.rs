@@ -356,7 +356,7 @@ fn choice_button(ui: &mut egui::Ui, entry: &Entry, color: Color32, chosen: &mut 
 }
 
 /// The "Details" line that folds the panel below the cards away and back.
-fn details_header(ui: &mut egui::Ui, closed: &mut bool) {
+pub(crate) fn details_header(ui: &mut egui::Ui, closed: &mut bool) {
     ui.horizontal(|ui| {
         let (chevron_rect, chevron) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::click());
         draw_chevron(ui.painter(), chevron_rect.center(), *closed);

@@ -136,7 +136,7 @@ fn monitors_of(p: &Project) -> Vec<MonitorTrack> {
 }
 
 /// Where track `i`'s signal goes: its sends, and for an Aux strip the bus it listens to.
-fn route_of(p: &Project, i: usize) -> Route {
+pub(crate) fn route_of(p: &Project, i: usize) -> Route {
     let Some(t) = p.tracks.get(i) else {
         return Route::default();
     };
@@ -1180,6 +1180,7 @@ mod tests {
             vca: None,
             midi_port: None,
             soundfont: None,
+            summing_stack: false,
             midi_channel: 1,
             midi_program: None,
             midi_bank: None,
