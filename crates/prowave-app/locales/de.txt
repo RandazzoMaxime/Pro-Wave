@@ -886,3 +886,4 @@ Loop Browser = Loop-Browser
 File Browser = Dateibrowser
 Record Enable: arm the track for recording = Aufnahmebereitschaft: Spur für die Aufnahme scharfschalten
 Input Monitoring: hear the input of the track = Eingangsüberwachung: den Eingang der Spur hören
+This region plays only part of its recording, which this command cannot handle yet = Diese Region spielt nur einen Teil ihrer Aufnahme, den dieser Befehl noch nicht verarbeiten kann

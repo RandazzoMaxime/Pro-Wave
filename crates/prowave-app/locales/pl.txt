@@ -886,3 +886,4 @@ Loop Browser = Przeglądarka pętli
 File Browser = Przeglądarka plików
 Record Enable: arm the track for recording = Gotowość do nagrywania: przygotuj ścieżkę do nagrania
 Input Monitoring: hear the input of the track = Monitorowanie wejścia: słuchaj wejścia ścieżki
+This region plays only part of its recording, which this command cannot handle yet = Ten region odtwarza tylko część swojego nagrania, czego to polecenie jeszcze nie obsługuje

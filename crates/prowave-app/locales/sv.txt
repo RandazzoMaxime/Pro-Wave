@@ -886,3 +886,4 @@ Loop Browser = Loopbläddrare
 File Browser = Filbläddrare
 Record Enable: arm the track for recording = Inspelningsklar: gör spåret redo för inspelning
 Input Monitoring: hear the input of the track = Ingångsövervakning: hör spårets ingång
+This region plays only part of its recording, which this command cannot handle yet = Den här regionen spelar bara en del av sin inspelning, vilket det här kommandot ännu inte klarar
