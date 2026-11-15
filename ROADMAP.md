@@ -374,7 +374,6 @@ The items below marked done are in 0.2.2 (see CHANGELOG.md for the full list, an
 limitations at the end of the section). Still open, in the order the work would take them:
 
 - Plug-in hosting: CLAP, VST3 and Audio Unit effects load in the Audio FX slots (`prowave-plugin-host`, done 2026-11-14), with the Plugin Manager and a scan in a separate process. Each plug-in runs in a process of its own on macOS and Linux, shows its own window on macOS, and its parameters can be automated. Not done: instruments, the process of its own on Windows, the plug-ins' own windows on Windows and Linux.
-- Audio output device and I/O buffer size in Project Settings > Audio (needs an engine stream restart).
 - An offline (faster than real time) bounce: Bounce, Export Track, Bounce in Place and Bounce and Join all work now, but at playing speed.
 - Convert to New Sampler Track (needs a sampler instrument).
 - Show Chord Track and Show Arrangement Track (new data models).
