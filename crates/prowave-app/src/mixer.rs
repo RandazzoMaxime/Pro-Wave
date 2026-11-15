@@ -238,6 +238,28 @@ fn caption(g: &Painter, r: Rect, text: &str) {
     );
 }
 
+/// What an empty slot shows while the pointer is over it, as Logic's does: it lights up as a
+/// pop-up button, with the slot's name and the up and down chevrons of a menu. Without this an
+/// empty slot gives no sign that it can be clicked.
+fn hover_popup(g: &Painter, r: Rect, text: &str) {
+    g.rect_filled(r, 3.0, SLOT_GRAY);
+    g.text(
+        pos2(r.center().x - 4.0, r.center().y),
+        Align2::CENTER_CENTER,
+        text,
+        FontId::proportional(10.5),
+        Color32::WHITE,
+    );
+    let stroke = Stroke::new(1.2, Color32::WHITE);
+    let c = pos2(r.right() - 8.0, r.center().y);
+    for dir in [-1.0, 1.0] {
+        let base = c.y + dir * 1.5;
+        let apex = c.y + dir * 3.5;
+        g.line_segment([pos2(c.x - 2.5, base), pos2(c.x, apex)], stroke);
+        g.line_segment([pos2(c.x, apex), pos2(c.x + 2.5, base)], stroke);
+    }
+}
+
 fn small_button(
     ui: &Ui,
     g: &Painter,
@@ -894,6 +916,9 @@ fn send_slots(
         } else if k == sends.len() && sends.len() < MAX_SENDS {
             let resp = ui.interact(r, uid.with(("empty", k)), Sense::click());
             slot(g, r, "", SLOT_EMPTY, TEXT);
+            if resp.hovered() {
+                hover_popup(g, r, tr("Sends"));
+            }
             let mut picked = None;
             let choice =
                 crate::native_popup::menu(&resp, || send_menu_items(None, aux, *on_faders));
@@ -1038,6 +1063,9 @@ fn insert_slot(
     match have {
         None => {
             let resp = ui.interact(r, uid, Sense::click());
+            if resp.hovered() {
+                hover_popup(g, r, tr("Audio FX"));
+            }
             let recent = v.recent_picks.clone();
             let choice =
                 crate::native_popup::menu(&resp, || crate::plugin_picker::items(&recent, false));
