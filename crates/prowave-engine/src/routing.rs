@@ -35,6 +35,10 @@ pub fn send_gain(level: f32) -> f32 {
 pub struct Route {
     /// The bus an Aux strip takes as its input (1..=[`MAX_BUSES`]); 0 for every other strip.
     pub bus_in: u16,
+    /// The bus an audio track hears while it monitors, instead of a device input (Logic's bus
+    /// input); 0 for none. Such a strip runs after the strips with effects and sends, so the
+    /// bus is full when it is read.
+    pub input_bus: u16,
     /// The bus the strip plays into instead of Stereo Out (Logic: the Output slot); 0 is
     /// Stereo Out.
     pub output: u16,
@@ -46,7 +50,7 @@ impl Route {
     /// up to the highest one in use, not all [`MAX_BUSES`] at every sample.
     pub fn top_bus(&self) -> usize {
         let sends = self.sends.iter().map(|s| s.bus).max().unwrap_or(0);
-        usize::from(self.bus_in.max(self.output).max(sends)).min(MAX_BUSES)
+        usize::from(self.bus_in.max(self.input_bus).max(self.output).max(sends)).min(MAX_BUSES)
     }
 
     /// The same route with every bus number put into range.
@@ -54,6 +58,9 @@ impl Route {
         let ok = |b: u16| b as usize <= MAX_BUSES;
         if !ok(self.bus_in) {
             self.bus_in = 0;
+        }
+        if !ok(self.input_bus) {
+            self.input_bus = 0;
         }
         // An Aux strip runs after the strips that feed the buses, so it cannot feed one.
         if !ok(self.output) || self.bus_in > 0 {
@@ -207,6 +214,26 @@ pub const MAX_AUTO_POINTS: usize = 20_000;
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_bus_number_past_the_last_bus_is_no_bus() {
+        let route = Route {
+            bus_in: MAX_BUSES as u16 + 1,
+            input_bus: MAX_BUSES as u16 + 1,
+            ..Route::default()
+        }
+        .sanitized();
+        assert_eq!((route.bus_in, route.input_bus), (0, 0));
+        let fed = Route {
+            input_bus: MAX_BUSES as u16,
+            ..Route::default()
+        };
+        assert_eq!(
+            fed.top_bus(),
+            MAX_BUSES,
+            "the last bus is cleared with the others"
+        );
+    }
+
     fn lane(points: &[(f64, f32)]) -> AutoLane {
         AutoLane {
             track: 0,
@@ -293,6 +320,7 @@ mod tests {
         };
         let r = Route {
             bus_in: 2000,
+            input_bus: 0,
             output: 0,
             sends,
         }
@@ -311,6 +339,7 @@ mod tests {
         }
         let route = Route {
             bus_in: 0,
+            input_bus: 0,
             output: 0,
             sends,
         }

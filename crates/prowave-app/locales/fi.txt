@@ -827,6 +827,7 @@ Create New Track = Luo uusi raita
 Audio Input: = Äänitulo:
 Instrument: = Soitin:
 No Input = Ei tuloa
+No Instrument = Ei instrumenttia
 Studio Bass = Studio Bass
 Load Default Patch = Lataa oletuspatch
 Open Library = Avaa kirjasto

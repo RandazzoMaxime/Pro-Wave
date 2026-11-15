@@ -827,6 +827,7 @@ Create New Track = Sukurti naują takelį
 Audio Input: = Garso įvestis:
 Instrument: = Instrumentas:
 No Input = Be įvesties
+No Instrument = Be instrumento
 Studio Bass = Studio Bass
 Load Default Patch = Įkelti numatytąjį patch
 Open Library = Atidaryti biblioteką

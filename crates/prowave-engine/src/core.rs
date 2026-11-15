@@ -831,11 +831,13 @@ pub struct EngineCore {
     /// Delay compensation per strip.
     pdc: Vec<Option<Box<Pdc>>>,
     routes: Vec<Route>,
-    /// Strips with effects or sends (processed in order), and Aux strips (processed after
-    /// them, once the buses are full).
+    /// Strips with effects or sends (processed in order), then the strips fed from a bus (an
+    /// audio track monitoring a bus), then the Aux strips. Each group runs once the buses it
+    /// reads are full: only the Aux strips and the fed strips read buses.
     complex: Vec<u16>,
+    fed: Vec<u16>,
     aux: Vec<u16>,
-    /// 0 plain strip, 1 complex, 2 aux.
+    /// 0 plain strip, 1 complex, 2 aux, 3 fed from a bus.
     strip_kind: Vec<u8>,
     /// The signal of each strip for the current sample, before effects and fader.
     /// The strips' signals and the buses are summed in 64 bits, so many strips (and the
@@ -983,6 +985,7 @@ impl EngineCore {
             pdc: (0..MAX_TRACKS).map(|_| None).collect(),
             routes: vec![Route::default(); MAX_TRACKS],
             complex: Vec::with_capacity(MAX_TRACKS),
+            fed: Vec::with_capacity(MAX_TRACKS),
             aux: Vec::with_capacity(MAX_TRACKS),
             strip_kind: vec![0; MAX_TRACKS],
             in_l: vec![0.0; MAX_TRACKS],
@@ -1316,6 +1319,7 @@ impl EngineCore {
     /// Sorts the strips into plain, complex (effects or sends) and Aux after any of them changed.
     fn sort_strips(&mut self) {
         self.complex.clear();
+        self.fed.clear();
         self.aux.clear();
         for i in 0..MAX_TRACKS {
             let has_chain = self.chains[i].as_ref().is_some_and(|c| !c.fx.is_empty());
@@ -1324,6 +1328,9 @@ impl EngineCore {
             self.strip_kind[i] = if self.routes[i].bus_in > 0 {
                 self.aux.push(i as u16);
                 2
+            } else if self.routes[i].input_bus > 0 {
+                self.fed.push(i as u16);
+                3
             } else if has_chain || has_pdc || to_bus || self.routes[i].has_sends() {
                 self.complex.push(i as u16);
                 1
@@ -1387,10 +1394,13 @@ impl EngineCore {
         let (mut xl, mut xr) = (self.in_l[t], self.in_r[t]);
         self.in_l[t] = 0.0;
         self.in_r[t] = 0.0;
-        if route.bus_in > 0 {
-            let b = route.bus_in as usize - 1;
-            xl += self.bus_l[b];
-            xr += self.bus_r[b];
+        // The bus an Aux strip listens to, or the bus an audio track monitors (never both).
+        for bus in [route.bus_in, route.input_bus] {
+            if bus > 0 {
+                let b = bus as usize - 1;
+                xl += self.bus_l[b];
+                xr += self.bus_r[b];
+            }
         }
         if !audible {
             xl = 0.0;
@@ -1523,10 +1533,13 @@ impl EngineCore {
         for k in 0..self.complex.len() {
             self.run_strip(self.complex[k] as usize, &mut out);
         }
+        for k in 0..self.fed.len() {
+            self.run_strip(self.fed[k] as usize, &mut out);
+        }
         for k in 0..self.aux.len() {
             self.run_strip(self.aux[k] as usize, &mut out);
         }
-        if !self.aux.is_empty() || !self.complex.is_empty() {
+        if !self.aux.is_empty() || !self.fed.is_empty() || !self.complex.is_empty() {
             self.bus_l[..self.bus_top].fill(0.0);
             self.bus_r[..self.bus_top].fill(0.0);
         }
@@ -2399,7 +2412,12 @@ impl EngineCore {
             *l = decayed_peak(self.track_pk_l[t], *l);
             *r = decayed_peak(self.track_pk_r[t], *r);
         }
-        for &t in self.complex.iter().chain(self.aux.iter()) {
+        for &t in self
+            .complex
+            .iter()
+            .chain(self.fed.iter())
+            .chain(self.aux.iter())
+        {
             let t = t as usize;
             shown.gain_reduction[t] = self.chains[t].as_ref().map_or(0.0, |c| c.reduction_db());
             shown.fx_input[t] = self.chains[t].as_ref().map_or(0.0, |c| c.input_level());
@@ -3917,6 +3935,51 @@ mod tests {
         let top = play(true, false, 1.0).0;
         let half = play(true, false, 0.5).0;
         assert!(half < top * 0.2 && half > top * 0.01, "{half} {top}");
+    }
+
+    #[test]
+    fn a_bus_feeds_the_track_that_monitors_it_through_its_strip() {
+        // Track 0's note reaches Bus 1 only through a pre-fader send (its own fader is down);
+        // track 1 hears Bus `input_bus` and plays what it hears to Stereo Out.
+        let play = |input_bus: u16| {
+            let (mut e, mut tx, mut s) = rig();
+            let mut mixes = vec![TrackMix::default(), TrackMix::default()];
+            mixes[0].gain_db = -96.0;
+            let song = Song::new(vec![strip_note(0, 2.0)], mixes);
+            assert!(tx.push(Command::SetSong(Box::new(song))).is_ok());
+            let mut send = Route::default();
+            send.sends[0] = SendSpec {
+                bus: 1,
+                level: 0.7,
+                pre: true,
+            };
+            assert!(tx
+                .push(Command::SetRoute {
+                    track: 0,
+                    route: send
+                })
+                .is_ok());
+            let fed = Route {
+                input_bus,
+                ..Route::default()
+            };
+            assert!(tx
+                .push(Command::SetRoute {
+                    track: 1,
+                    route: fed
+                })
+                .is_ok());
+            assert!(tx.push(Command::Play).is_ok());
+            let buf = render(&mut e, 0.3);
+            let (peak, _) = s.read().track_peaks(1);
+            (energy(&buf, 0.0, 0.3), peak)
+        };
+        let (heard, peak) = play(1);
+        assert!(heard > 0.01 && peak > 0.05, "{heard} {peak}");
+        // Another bus carries nothing, and no bus at all is silence.
+        let (other, _) = play(2);
+        assert!(other < 1e-5, "{other}");
+        assert!(play(0).0 < 1e-5);
     }
 
     #[test]

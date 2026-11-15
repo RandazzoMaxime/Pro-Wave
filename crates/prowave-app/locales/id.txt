@@ -827,6 +827,7 @@ Create New Track = Buat Track Baru
 Audio Input: = Input Audio:
 Instrument: = Instrumen:
 No Input = Tanpa Input
+No Instrument = Tanpa Instrumen
 Studio Bass = Studio Bass
 Load Default Patch = Muat Patch Default
 Open Library = Buka Library

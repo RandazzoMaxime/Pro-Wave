@@ -827,6 +827,7 @@ Create New Track = Gumawa ng Bagong Track
 Audio Input: = Audio Input:
 Instrument: = Instrument:
 No Input = Walang Input
+No Instrument = Walang Instrumento
 Studio Bass = Studio Bass
 Load Default Patch = I-load ang Default Patch
 Open Library = Buksan ang Library

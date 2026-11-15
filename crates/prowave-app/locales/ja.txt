@@ -827,6 +827,7 @@ Create New Track = 新規トラックを作成
 Audio Input: = オーディオ入力:
 Instrument: = 音源:
 No Input = 入力なし
+No Instrument = 音源なし
 Studio Bass = Studio Bass
 Load Default Patch = デフォルトパッチを読み込む
 Open Library = ライブラリを開く

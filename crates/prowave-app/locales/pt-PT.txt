@@ -827,6 +827,7 @@ Create New Track = Criar nova faixa
 Audio Input: = Entrada de áudio:
 Instrument: = Instrumento:
 No Input = Sem entrada
+No Instrument = Nenhum instrumento
 Studio Bass = Studio Bass
 Load Default Patch = Carregar patch predefinido
 Open Library = Abrir biblioteca
