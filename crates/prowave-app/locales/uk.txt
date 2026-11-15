@@ -824,6 +824,7 @@ Create New Track = Створити нову доріжку
 Audio Input: = Аудіовхід:
 Instrument: = Інструмент:
 No Input = Без входу
+No Instrument = Немає інструмента
 Studio Bass = Studio Bass
 Load Default Patch = Завантажити типовий патч
 Open Library = Відкрити бібліотеку

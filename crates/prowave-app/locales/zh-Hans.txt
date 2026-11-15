@@ -824,6 +824,7 @@ Create New Track = 新建轨道
 Audio Input: = 音频输入：
 Instrument: = 乐器：
 No Input = 无输入
+No Instrument = 无乐器
 Studio Bass = Studio Bass
 Load Default Patch = 加载默认 Patch
 Open Library = 打开资源库

@@ -486,8 +486,14 @@ pub fn to_doc(p: &Project) -> (ProjectDoc, Vec<MediaFile>) {
             icon: t.icon.map(|k| k.name().to_string()),
             input: match t.input {
                 InputSource::Mono(c) | InputSource::Stereo(c) => c,
+                InputSource::None | InputSource::Bus(_) => 0,
             },
             input_stereo: matches!(t.input, InputSource::Stereo(_)),
+            input_bus: match t.input {
+                InputSource::Bus(bus) => bus,
+                _ => 0,
+            },
+            input_none: t.input == InputSource::None,
             output: t.output,
             aux_bus: t.aux_bus,
             groove: t.params.groove,
@@ -877,7 +883,7 @@ pub fn from_doc(doc: &ProjectDoc, media_dir: &Path, ctx: &egui::Context) -> (Pro
                 .icon
                 .as_deref()
                 .and_then(crate::track_icons::IconKind::from_name),
-            input: input_source(t.input, t.input_stereo),
+            input: input_source(t.input, t.input_stereo, t.input_bus, t.input_none),
             output: if usize::from(t.output) <= prowave_engine::MAX_BUSES {
                 t.output
             } else {
@@ -1184,8 +1190,15 @@ pub fn bounces_dir() -> PathBuf {
     session_media_dir().join("bounces")
 }
 
-/// A track's input from a project file, which can hold any number.
-fn input_source(channel: u16, stereo: bool) -> InputSource {
+/// A track's input from a project file, which can hold any number. A bus outside the mix is no
+/// bus, and then the device channel is used (as in a file from before bus inputs).
+fn input_source(channel: u16, stereo: bool, bus: u16, none: bool) -> InputSource {
+    if (1..=prowave_engine::MAX_BUSES as u16).contains(&bus) {
+        return InputSource::Bus(bus);
+    }
+    if none {
+        return InputSource::None;
+    }
     let channel = channel.min(prowave_engine::MAX_INPUT_CHANNELS as u16 - 2);
     if stereo {
         InputSource::Stereo(channel)
@@ -1458,6 +1471,50 @@ pub(crate) mod tests {
         bad.tracks[0].vca = Some(99);
         let (r, _) = from_doc(&bad, Path::new("."), &egui::Context::default());
         assert_eq!(r.tracks[0].vca, None);
+    }
+
+    #[test]
+    fn bus_and_no_inputs_survive_a_save_and_an_old_file_still_loads() {
+        let mut p = Project::empty();
+        p.tracks.clear();
+        for input in [
+            InputSource::None,
+            InputSource::Bus(22),
+            InputSource::Bus(256),
+            InputSource::Stereo(4),
+        ] {
+            p.tracks.push(Track::new("Audio", TrackKind::Audio));
+            p.tracks.last_mut().unwrap().input = input;
+        }
+        let (doc, _) = to_doc(&p);
+        let (q, _) = from_doc(&doc, Path::new("."), &egui::Context::default());
+        let inputs: Vec<InputSource> = q.tracks.iter().map(|t| t.input).collect();
+        assert_eq!(
+            inputs,
+            [
+                InputSource::None,
+                InputSource::Bus(22),
+                InputSource::Bus(256),
+                InputSource::Stereo(4)
+            ]
+        );
+        // A file from before bus inputs has neither field: it still records Input 1.
+        let old: TrackDoc = serde_json::from_str(r#"{"name":"Old","input":0}"#).unwrap();
+        assert_eq!((old.input_bus, old.input_none), (0, false));
+        assert_eq!(
+            input_source(old.input, old.input_stereo, old.input_bus, old.input_none),
+            InputSource::Mono(0)
+        );
+        // A hostile file: a bus past the last one, or bus 0, is no bus, and the device input
+        // is used instead.
+        for bus in [0u16, 257, u16::MAX] {
+            let mut bad = doc.clone();
+            bad.tracks[1].input_bus = bus;
+            bad.tracks[1].input = 2;
+            bad.tracks[1].input_stereo = false;
+            let (r, _) = from_doc(&bad, Path::new("."), &egui::Context::default());
+            assert_eq!(r.tracks[1].input, InputSource::Mono(2), "bus {bus}");
+        }
     }
 
     #[test]

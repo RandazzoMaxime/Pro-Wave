@@ -268,6 +268,15 @@ pub static CATEGORIES: &[Category] = &[
     },
 ];
 
+/// The instruments the Library's categories load, by name, sorted: what a software instrument
+/// track's Instrument menu lists.
+pub fn instrument_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = CATEGORIES.iter().filter_map(|c| c.instrument).collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// What the track had before patches were auditioned on it (for Revert).
 #[derive(Clone)]
 struct Saved {
@@ -702,6 +711,13 @@ mod tests {
             .inserts
             .iter()
             .any(|i| i.kind == prowave_engine::FxKind::Amp));
+    }
+
+    #[test]
+    fn the_instrument_menu_lists_each_library_instrument_once() {
+        let names = instrument_names();
+        assert!(names.contains(&"Sampler") && names.contains(&"Drum Kit"));
+        assert!(names.windows(2).all(|w| w[0] < w[1]), "sorted and unique");
     }
 
     #[test]

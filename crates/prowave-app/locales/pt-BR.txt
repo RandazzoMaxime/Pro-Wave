@@ -824,6 +824,7 @@ Create New Track = Criar nova trilha
 Audio Input: = Entrada de áudio:
 Instrument: = Instrumento:
 No Input = Sem entrada
+No Instrument = Nenhum instrumento
 Studio Bass = Studio Bass
 Load Default Patch = Carregar patch padrão
 Open Library = Abrir biblioteca

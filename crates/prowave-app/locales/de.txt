@@ -824,6 +824,7 @@ Create New Track = Neue Spur erstellen
 Audio Input: = Audioeingang:
 Instrument: = Instrument:
 No Input = Kein Eingang
+No Instrument = Kein Instrument
 Studio Bass = Studio Bass
 Load Default Patch = Standard-Patch laden
 Open Library = Library öffnen

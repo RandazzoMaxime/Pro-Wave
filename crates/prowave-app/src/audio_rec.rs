@@ -79,11 +79,14 @@ impl InputChoice {
     }
 }
 
-/// The name of an input in the channel strip's Input slot.
+/// The name of an input in the channel strip's Input slot. No Input has no name (the slot is
+/// empty), and a bus is named as the send menus name one.
 pub fn input_label(source: InputSource) -> String {
     match source {
         InputSource::Mono(c) => trf("Input {}", &[&(c + 1)]),
         InputSource::Stereo(c) => trf("Input {}", &[&format!("{}-{}", c + 1, c + 2)]),
+        InputSource::None => String::new(),
+        InputSource::Bus(bus) => trf("Bus {}", &[&bus]),
     }
 }
 
@@ -120,20 +123,21 @@ pub struct AudioRecorder {
     fresh: Vec<f32>,
 }
 
-/// The audio tracks that record: the armed ones, or else the selected one.
+/// The audio tracks that record: the armed ones, or else the selected one. A track whose input
+/// is not a device channel (No Input, or a bus) has nothing to record and is left out.
 pub fn targets(p: &Project) -> Vec<usize> {
     let armed: Vec<usize> = p
         .tracks
         .iter()
         .enumerate()
-        .filter(|(_, t)| t.kind == TrackKind::Audio && t.rec)
+        .filter(|(_, t)| t.kind == TrackKind::Audio && t.rec && t.input.is_device())
         .map(|(i, _)| i)
         .collect();
     if !armed.is_empty() {
         return armed;
     }
     let selected = p.tracks.get(p.selected_track);
-    if selected.is_some_and(|t| t.kind == TrackKind::Audio) {
+    if selected.is_some_and(|t| t.kind == TrackKind::Audio && t.input.is_device()) {
         vec![p.selected_track]
     } else {
         Vec::new()
@@ -145,12 +149,13 @@ pub fn takes_over(p: &Project) -> bool {
     p.recording && !targets(p).is_empty()
 }
 
-/// Whether a track needs the input open now.
+/// Whether a track needs the device's input open now. A bus input is heard from the mix, so
+/// it does not hold the device.
 fn needs_input(p: &Project) -> bool {
     takes_over(p)
         || p.tracks
             .iter()
-            .any(|t| t.kind == TrackKind::Audio && (t.rec || t.monitor))
+            .any(|t| t.kind == TrackKind::Audio && (t.rec || t.monitor) && t.input.is_device())
 }
 
 /// The file for a recording on track `name`.
@@ -218,6 +223,8 @@ impl AudioRecorder {
                 *meter = match t.input {
                     InputSource::Mono(c) => (at(c), at(c)),
                     InputSource::Stereo(c) => (at(c), at(c + 1)),
+                    // Nothing of the device to show: the meter keeps the track's own level.
+                    InputSource::None | InputSource::Bus(_) => continue,
                 };
             }
         }
@@ -465,9 +472,39 @@ mod tests {
     }
 
     #[test]
+    fn a_track_without_a_device_input_records_and_opens_nothing() {
+        let mut p = project(&[TrackKind::Audio, TrackKind::Audio]);
+        p.tracks[0].input = InputSource::None;
+        p.tracks[1].input = InputSource::Bus(22);
+        p.tracks[0].rec = true;
+        p.tracks[1].monitor = true;
+        assert!(targets(&p).is_empty(), "armed, but nothing to record");
+        assert!(
+            !needs_input(&p),
+            "a bus is heard from the mix, not the device"
+        );
+        p.selected_track = 1;
+        assert!(
+            targets(&p).is_empty(),
+            "the selected track has no input either"
+        );
+        assert!(!takes_over(&p));
+        p.tracks[1].input = InputSource::Mono(1);
+        p.tracks[0].input = InputSource::Mono(0);
+        assert_eq!(
+            targets(&p),
+            vec![0],
+            "the armed track, which has a device input now"
+        );
+        assert!(needs_input(&p));
+    }
+
+    #[test]
     fn input_names() {
         assert_eq!(input_label(InputSource::Mono(0)), "Input 1");
         assert_eq!(input_label(InputSource::Stereo(2)), "Input 3-4");
+        assert_eq!(input_label(InputSource::None), "");
+        assert_eq!(input_label(InputSource::Bus(22)), "Bus 22");
     }
 
     #[test]

@@ -37,20 +37,34 @@ const HEADER_REFRESH: Duration = Duration::from_secs(1);
 /// A WAV file cannot hold more audio than its 32-bit sizes can count.
 const MAX_DATA_BYTES: u64 = u32::MAX as u64 - 36;
 
-/// Which input channels a track records (Logic: the Input slot of an audio channel strip).
+/// What an audio track takes as its input (Logic: the Input slot of an audio channel strip).
 /// Channels count from 0: `Mono(0)` is "Input 1", `Stereo(0)` is "Input 1 + 2".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputSource {
+    /// A mono input of the device.
     Mono(u16),
+    /// A stereo pair of the device, starting at this channel.
     Stereo(u16),
+    /// Nothing: the track records and monitors no input (Logic's "No Input").
+    None,
+    /// A bus of the mix (1..=256), as Logic's bus inputs. The track monitors the bus's sum; it
+    /// cannot be recorded yet.
+    Bus(u16),
 }
 
 impl InputSource {
-    /// Channels in the recorded file.
+    /// Whether the input is a channel of the audio device (the only inputs that can be
+    /// recorded, and that monitoring can hear through the input feed).
+    pub fn is_device(self) -> bool {
+        matches!(self, Self::Mono(_) | Self::Stereo(_))
+    }
+
+    /// Channels in the recorded file (none for an input that records nothing).
     pub fn file_channels(self) -> u16 {
         match self {
             Self::Mono(_) => 1,
             Self::Stereo(_) => 2,
+            Self::None | Self::Bus(_) => 0,
         }
     }
 
@@ -59,6 +73,7 @@ impl InputSource {
         match self {
             Self::Mono(c) => c.saturating_add(1),
             Self::Stereo(c) => c.saturating_add(2),
+            Self::None | Self::Bus(_) => 0,
         }
     }
 }
@@ -90,6 +105,9 @@ pub enum CaptureError {
     Io(std::io::Error),
     /// The writer thread is gone, or does not know the recording.
     Closed,
+    /// The track's input is not a channel of the device (No Input, or a bus), so there is
+    /// nothing to record.
+    NotDeviceInput,
 }
 
 impl fmt::Display for CaptureError {
@@ -103,6 +121,7 @@ impl fmt::Display for CaptureError {
             }
             Self::Io(e) => write!(f, "cannot write the recording: {e}"),
             Self::Closed => write!(f, "the recording is not running"),
+            Self::NotDeviceInput => write!(f, "the track's input is not an audio input"),
         }
     }
 }
@@ -309,6 +328,8 @@ impl Rec {
             let pair = match self.source {
                 InputSource::Mono(c) => [frame[usize::from(c)], 0.0],
                 InputSource::Stereo(c) => [frame[usize::from(c)], frame[usize::from(c) + 1]],
+                // Never started (see `start_rec`), so nothing is written for them.
+                InputSource::None | InputSource::Bus(_) => [0.0, 0.0],
             };
             let out = &pair[..usize::from(self.source.file_channels())];
             if !self.file.has_room() || self.file.write_frame(out).is_err() {
@@ -457,6 +478,9 @@ fn start_rec(
     channels: usize,
     sample_rate: u32,
 ) -> Result<Rec, CaptureError> {
+    if !source.is_device() {
+        return Err(CaptureError::NotDeviceInput);
+    }
     if usize::from(source.needs()) > channels {
         return Err(CaptureError::MissingChannels {
             needs: source.needs(),
@@ -1039,5 +1063,20 @@ mod tests {
         assert_eq!(InputSource::Mono(0).needs(), 1);
         assert_eq!(InputSource::Stereo(2).needs(), 4);
         assert_eq!(InputSource::Stereo(0).file_channels(), 2);
+    }
+
+    #[test]
+    fn only_a_device_channel_can_be_recorded() {
+        assert!(InputSource::Mono(3).is_device() && InputSource::Stereo(0).is_device());
+        assert!(!InputSource::None.is_device() && !InputSource::Bus(22).is_device());
+        assert_eq!(InputSource::None.needs(), 0);
+        assert_eq!(InputSource::Bus(22).file_channels(), 0);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.wav");
+        for source in [InputSource::None, InputSource::Bus(22)] {
+            let refused = start_rec(&path, source, 0, 8, 48_000);
+            assert!(matches!(refused, Err(CaptureError::NotDeviceInput)));
+        }
+        assert!(!path.exists(), "no file is made for them");
     }
 }

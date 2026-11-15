@@ -824,6 +824,7 @@ Create New Track = Opprett nytt spor
 Audio Input: = Lydinngang:
 Instrument: = Instrument:
 No Input = Ingen inngang
+No Instrument = Ingen instrument
 Studio Bass = Studio Bass
 Load Default Patch = Last inn standardpatch
 Open Library = Åpne bibliotek

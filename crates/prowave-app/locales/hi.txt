@@ -824,6 +824,7 @@ Create New Track = नया ट्रैक बनाएँ
 Audio Input: = ऑडियो इनपुट:
 Instrument: = इंस्ट्रूमेंट:
 No Input = कोई इनपुट नहीं
+No Instrument = कोई इंस्ट्रूमेंट नहीं
 Studio Bass = Studio Bass
 Load Default Patch = डिफ़ॉल्ट पैच लोड करें
 Open Library = लाइब्रेरी खोलें

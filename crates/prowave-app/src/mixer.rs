@@ -24,6 +24,7 @@ use crate::UiState;
 use egui::{
     pos2, vec2, Align2, Color32, FontId, Painter, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
 };
+use prowave_engine::InputSource;
 use std::collections::HashMap;
 
 const TOOLBAR_H: f32 = 30.0;
@@ -800,6 +801,24 @@ fn bus_label(bus: u16, aux: &[(u16, String)]) -> String {
 /// The buses the Bus menu lists itself, and that each of its submenus holds.
 const BUS_MENU_PAGE: usize = 32;
 
+/// The buses of a Bus menu, as Logic lists the 256 of them: the first 32 as lines, a separator,
+/// then submenus of 32 ("33 - 64" and so on up to "225 - 256"). `line` makes the line of a bus.
+fn bus_pages<A>(line: impl Fn(u16) -> Item<A>) -> Vec<Item<A>> {
+    let last = prowave_engine::MAX_BUSES;
+    let lines = |range: std::ops::RangeInclusive<usize>| -> Vec<Item<A>> {
+        range.map(|b| line(b as u16)).collect()
+    };
+    let mut items = lines(1..=BUS_MENU_PAGE.min(last));
+    if last > BUS_MENU_PAGE {
+        items.push(Item::Separator);
+    }
+    for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
+        let end = (first + BUS_MENU_PAGE - 1).min(last);
+        items.push(Item::sub(format!("{first} - {end}"), lines(first..=end)));
+    }
+    items
+}
+
 /// What the user chose in a send's menu.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum SendAct {
@@ -839,21 +858,7 @@ fn send_menu_items(
     items.push(Item::action(tr("No Send"), SendAct::NoSend).enabled(filled));
     items.push(Item::Separator);
     // Logic's Bus menu: the first 32 buses, then the rest in submenus of 32.
-    let lines = |range: std::ops::RangeInclusive<usize>| -> Vec<Item<SendAct>> {
-        range
-            .map(|b| b as u16)
-            .map(|b| Item::checked(bus_label(b, aux), bus == Some(b), SendAct::Bus(b)))
-            .collect()
-    };
-    let last = prowave_engine::MAX_BUSES;
-    let mut buses = lines(1..=BUS_MENU_PAGE.min(last));
-    if last > BUS_MENU_PAGE {
-        buses.push(Item::Separator);
-    }
-    for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
-        let end = (first + BUS_MENU_PAGE - 1).min(last);
-        buses.push(Item::sub(format!("{first} - {end}"), lines(first..=end)));
-    }
+    let buses = bus_pages(|b| Item::checked(bus_label(b, aux), bus == Some(b), SendAct::Bus(b)));
     items.push(Item::sub(tr("Bus"), buses));
     items.push(Item::Separator);
     items.push(Item::disabled(tr("Copy Fader to Send"), SendAct::Keep));
@@ -1460,7 +1465,7 @@ pub fn channel_strip(
     let sx = strip.left() + 4.0;
     let row = |y: f32, h: f32| Rect::from_min_size(pos2(sx, y), vec2(inner_w, h));
 
-    let (name, color, inserts, kind, instrument) = match key {
+    let (name, color, inserts, kind) = match key {
         StripKey::Track(i) => {
             let t = &p.tracks[i];
             (
@@ -1471,7 +1476,6 @@ pub fn channel_strip(
                     .map(|x| (x.name(), x.bypass))
                     .collect::<Vec<_>>(),
                 Some(t.kind),
-                t.instrument,
             )
         }
         StripKey::StereoOut => (
@@ -1482,9 +1486,8 @@ pub fn channel_strip(
                 .map(|x| (x.name(), x.bypass))
                 .collect(),
             None,
-            None,
         ),
-        StripKey::Master => (tr("Master").to_string(), MASTER_PINK, vec![], None, None),
+        StripKey::Master => (tr("Master").to_string(), MASTER_PINK, vec![], None),
     };
     let beat = p.position_beats;
     let eq_params = match key {
@@ -1553,50 +1556,31 @@ pub fn channel_strip(
             }
         }
         let input_r = row(r.input, 16.0);
-        match (kind, instrument) {
-            // A software instrument's input is green in Logic; grey while the strip is silent.
-            (Some(TrackKind::Instrument | TrackKind::Drummer), Some(inst)) => {
-                let (fill, text) = if inactive {
-                    (PLUGIN_OFF, TEXT_DIM)
-                } else {
-                    (INSTRUMENT_GREEN, Color32::WHITE)
-                };
-                slot(g, input_r, inst, fill, text)
+        let slot_id = |key: StripKey| id(ns, (key, "input"));
+        match (kind, key) {
+            // A software instrument's slot names its instrument and opens the Instrument menu.
+            (Some(TrackKind::Instrument | TrackKind::Drummer), StripKey::Track(i)) => {
+                instrument_slot(ui, g, input_r, p, i, slot_id(key), inactive);
             }
-            // An aux strip's input is the bus it listens to: Aux 1 takes Bus 1, and so on.
-            (Some(TrackKind::Aux), _) => {
-                let n = match key {
-                    StripKey::Track(i) => p.aux_bus_of(i),
-                    _ => 1,
-                };
-                let text = if n == 0 {
-                    String::new()
-                } else {
-                    trf("Bus {}", &[&n])
-                };
-                slot(g, input_r, &text, plug, plug_text);
+            // An aux strip's input is the bus it listens to, and its menu is the Bus menu.
+            (Some(TrackKind::Aux), StripKey::Track(i)) => {
+                aux_input_slot(ui, g, input_r, p, i, slot_id(key), (plug, plug_text));
             }
-            // An external MIDI strip shows where its notes go: the port and the channel.
-            (Some(TrackKind::ExternalMidi), _) => {
-                let text = match key {
-                    StripKey::Track(i) => {
-                        let t = &p.tracks[i];
-                        let port = t
-                            .midi_port
-                            .clone()
-                            .unwrap_or_else(|| tr("No Port").to_string());
-                        format!("{port} · {}", t.midi_channel)
-                    }
-                    _ => String::new(),
-                };
+            // An external MIDI strip shows where its notes go: the port and the channel. Its
+            // slot opens the port menu.
+            (Some(TrackKind::ExternalMidi), StripKey::Track(i)) => {
+                let t = &p.tracks[i];
+                let port = t
+                    .midi_port
+                    .clone()
+                    .unwrap_or_else(|| tr("No Port").to_string());
+                let text = format!("{port} · {}", t.midi_channel);
                 let fitted = elide(g, &text, &FontId::proportional(10.5), input_r.width() - 8.0);
                 slot(g, input_r, &fitted, plug, plug_text);
+                port_menu(ui, input_r, p, i, slot_id(key));
             }
-            (Some(TrackKind::Audio), _) => {
-                if let StripKey::Track(i) = key {
-                    let slot_id = id(ns, (key, "input"));
-                    input_slot(ui, g, input_r, p, &mut v.inputs, i, slot_id);
-                }
+            (Some(TrackKind::Audio), StripKey::Track(i)) => {
+                input_slot(ui, g, input_r, p, &mut v.inputs, i, slot_id(key));
             }
             _ => slot(g, input_r, "", SLOT_EMPTY, TEXT),
         }
@@ -2034,22 +2018,10 @@ fn output_slot(
     let resp = ui.interact(r, id, Sense::click());
     // Stereo Out (0), then the buses as the send menu lists them: 32, then submenus of 32.
     let choice = crate::native_popup::menu(&resp, || {
-        let lines = |range: std::ops::RangeInclusive<usize>| -> Vec<Item<u16>> {
-            range
-                .map(|b| b as u16)
-                .map(|b| Item::checked(trf("Bus {}", &[&b]), current == b, b))
-                .collect()
-        };
-        let last = prowave_engine::MAX_BUSES;
         let mut items = vec![Item::checked(tr("Stereo Out"), current == 0, 0u16)];
-        items.extend(lines(1..=BUS_MENU_PAGE.min(last)));
-        if last > BUS_MENU_PAGE {
-            items.push(Item::Separator);
-        }
-        for first in (BUS_MENU_PAGE + 1..=last).step_by(BUS_MENU_PAGE) {
-            let end = (first + BUS_MENU_PAGE - 1).min(last);
-            items.push(Item::sub(format!("{first} - {end}"), lines(first..=end)));
-        }
+        items.extend(bus_pages(|b| {
+            Item::checked(trf("Bus {}", &[&b]), current == b, b)
+        }));
         items
     });
     if let Some(bus) = choice {
@@ -2057,7 +2029,48 @@ fn output_slot(
     }
 }
 
-/// An audio strip's Input slot: which inputs the track records, and from which device.
+/// The lines of an audio track's Input menu that say what it records (not the device): No
+/// Input, the mono inputs, the stereo pairs as Logic names them ("Input 1 + 2"), then the Bus
+/// submenu. `make` is what picking a line means.
+fn source_items<A: Clone>(
+    current: InputSource,
+    channels: u16,
+    make: impl Fn(InputSource) -> A,
+) -> Vec<Item<A>> {
+    let line = |s: InputSource, text: String| Item::checked(text, current == s, make(s));
+    let mut items = vec![line(InputSource::None, tr("No Input").to_string())];
+    if channels > 0 {
+        items.push(Item::Separator);
+        items.extend(
+            (0..channels).map(|c| line(InputSource::Mono(c), trf("Input {}", &[&(c + 1)]))),
+        );
+    }
+    let pairs: Vec<u16> = (0..channels.saturating_sub(1)).step_by(2).collect();
+    if !pairs.is_empty() {
+        items.push(Item::Separator);
+        items.extend(pairs.into_iter().map(|c| {
+            line(
+                InputSource::Stereo(c),
+                trf("Input {}", &[&format!("{} + {}", c + 1, c + 2)]),
+            )
+        }));
+    }
+    items.push(Item::Separator);
+    items.push(Item::sub(
+        tr("Bus"),
+        bus_pages(|b| {
+            Item::checked(
+                trf("Bus {}", &[&b]),
+                current == InputSource::Bus(b),
+                make(InputSource::Bus(b)),
+            )
+        }),
+    ));
+    items
+}
+
+/// An audio strip's Input slot: what the track records (No Input, a device input or a bus) and,
+/// in its menu, the device the inputs come from.
 fn input_slot(
     ui: &Ui,
     g: &Painter,
@@ -2068,9 +2081,14 @@ fn input_slot(
     id: egui::Id,
 ) {
     use crate::audio_rec::input_label;
-    use prowave_engine::InputSource;
     let source = p.tracks[i].input;
-    slot(g, r, &input_label(source), SLOT_GRAY, TEXT);
+    // No Input is an empty slot, and the ring icon is there either way, as in Logic.
+    let fill = if source == InputSource::None {
+        SLOT_EMPTY
+    } else {
+        SLOT_GRAY
+    };
+    slot(g, r, &input_label(source), fill, TEXT);
     // One ring for a mono input, two for a stereo pair.
     let ring = pos2(r.left() + 8.0, r.center().y);
     g.circle_stroke(ring, 3.5, stroke(TEXT));
@@ -2083,7 +2101,7 @@ fn input_slot(
     }
     let channels = inputs.channels();
     let (mut picked, mut device) = (None, None);
-    /// A line of the input menu: an input of the device, or the device itself (`None`: the
+    /// A line of the input menu: an input of the track, or the device itself (`None`: the
     /// system's default).
     #[derive(Clone)]
     enum Pick {
@@ -2091,15 +2109,7 @@ fn input_slot(
         Device(Option<String>),
     }
     let choice = crate::native_popup::menu(&resp, || {
-        let line = |s: InputSource| Item::checked(input_label(s), s == source, Pick::Source(s));
-        let mut items: Vec<Item<Pick>> =
-            (0..channels).map(|c| line(InputSource::Mono(c))).collect();
-        items.push(Item::Separator);
-        items.extend(
-            (0..channels.saturating_sub(1))
-                .step_by(2)
-                .map(|c| line(InputSource::Stereo(c))),
-        );
+        let mut items = source_items(source, channels, Pick::Source);
         items.push(Item::Separator);
         let mut devices = vec![Item::checked(
             tr("System Default"),
@@ -2130,6 +2140,135 @@ fn input_slot(
     }
     if let Some(d) = device {
         inputs.pick(d);
+    }
+}
+
+/// The lines of a software instrument track's Instrument menu: No Instrument, then the
+/// instruments the Library loads, with the track's own checked (and listed first when the
+/// Library has no line for it). `make` is what picking a line means.
+fn instrument_items<A: Clone>(
+    current: Option<&'static str>,
+    make: impl Fn(Option<&'static str>) -> A,
+) -> Vec<Item<A>> {
+    let mut items = vec![Item::checked(
+        tr("No Instrument"),
+        current.is_none(),
+        make(None),
+    )];
+    items.push(Item::Separator);
+    let mut names = crate::library::instrument_names();
+    if let Some(name) = current {
+        if !names.contains(&name) {
+            names.insert(0, name);
+        }
+    }
+    items.extend(
+        names
+            .into_iter()
+            .map(|name| Item::checked(name, current == Some(name), make(Some(name)))),
+    );
+    items
+}
+
+/// Makes `name` the track's instrument (None: No Instrument). A SoundFont the track played is
+/// taken away when the instrument changes: the track plays one or the other.
+fn pick_instrument(t: &mut crate::model::Track, name: Option<&'static str>) {
+    if t.instrument != name {
+        t.instrument = name;
+        t.soundfont = None;
+    }
+}
+
+/// A software instrument track's Instrument slot: the instrument's name in green (grey while
+/// the strip is silent), or an empty slot for No Instrument. Click it to choose one.
+fn instrument_slot(
+    ui: &Ui,
+    g: &Painter,
+    r: Rect,
+    p: &mut Project,
+    i: usize,
+    id: egui::Id,
+    inactive: bool,
+) {
+    let instrument = p.tracks[i].instrument;
+    let (fill, color) = match (instrument, inactive) {
+        (None, _) => (SLOT_EMPTY, TEXT),
+        (Some(_), true) => (PLUGIN_OFF, TEXT_DIM),
+        (Some(_), false) => (INSTRUMENT_GREEN, Color32::WHITE),
+    };
+    slot(g, r, instrument.unwrap_or(""), fill, color);
+    let resp = ui.interact(r, id, Sense::click());
+    let choice = crate::native_popup::menu(&resp, || instrument_items(instrument, |name| name));
+    if let Some(name) = choice {
+        pick_instrument(&mut p.tracks[i], name);
+    }
+}
+
+/// The lines of an Aux strip's Input menu: the Bus submenu only (an Aux takes a bus, never a
+/// device input), with the bus it listens to checked.
+fn aux_bus_items(current: u16) -> Vec<Item<u16>> {
+    vec![Item::sub(
+        tr("Bus"),
+        bus_pages(|b| Item::checked(trf("Bus {}", &[&b]), current == b, b)),
+    )]
+}
+
+/// An Aux strip's Input slot: the bus it listens to ("Bus N"). Picking a bus makes it listen to
+/// that bus, as Logic's Aux inputs do.
+fn aux_input_slot(
+    ui: &Ui,
+    g: &Painter,
+    r: Rect,
+    p: &mut Project,
+    i: usize,
+    id: egui::Id,
+    colors: (Color32, Color32),
+) {
+    let listens = p.aux_bus_of(i);
+    let text = if listens == 0 {
+        String::new()
+    } else {
+        trf("Bus {}", &[&listens])
+    };
+    slot(g, r, &text, colors.0, colors.1);
+    let resp = ui.interact(r, id, Sense::click());
+    if let Some(bus) = crate::native_popup::menu(&resp, || aux_bus_items(listens)) {
+        p.set_aux_bus(i, bus);
+    }
+}
+
+/// The lines of an External MIDI strip's port menu: No Port, then the MIDI output ports the
+/// system has. A port that is gone stays on the list, checked, so that its name is not lost.
+fn port_items<A: Clone>(
+    current: Option<&str>,
+    ports: &[String],
+    make: impl Fn(Option<String>) -> A,
+) -> Vec<Item<A>> {
+    let mut items = vec![Item::checked(tr("No Port"), current.is_none(), make(None))];
+    if let Some(name) = current {
+        if !ports.iter().any(|p| p == name) {
+            items.push(Item::checked(name, true, make(Some(name.to_string()))));
+        }
+    }
+    items.extend(ports.iter().map(|name| {
+        Item::checked(
+            name.clone(),
+            current == Some(name.as_str()),
+            make(Some(name.clone())),
+        )
+    }));
+    items
+}
+
+/// The port menu of an External MIDI strip's slot (the slot itself is drawn by the caller).
+fn port_menu(ui: &Ui, r: Rect, p: &mut Project, i: usize, id: egui::Id) {
+    let resp = ui.interact(r, id, Sense::click());
+    let current = p.tracks[i].midi_port.clone();
+    let choice = crate::native_popup::menu(&resp, || {
+        port_items(current.as_deref(), &crate::midi_out::ports(), |port| port)
+    });
+    if let Some(port) = choice {
+        p.tracks[i].midi_port = port;
     }
 }
 
@@ -3077,6 +3216,209 @@ mod tests {
         );
         assert_eq!(bus_label(1, &aux), "Bus 1 › Aux 1");
         assert_eq!(bus_label(3, &aux), "Bus 3");
+    }
+
+    /// Every line of a menu that can be picked, in order, the submenus included: (text, action).
+    fn picks<A: Clone>(items: &[Item<A>]) -> Vec<(String, A)> {
+        let mut out = Vec::new();
+        for item in items {
+            match item {
+                Item::Action { text, action, .. } => out.push((text.clone(), action.clone())),
+                Item::Sub { items, .. } => out.extend(picks(items)),
+                Item::Label(_) | Item::Separator => {}
+            }
+        }
+        out
+    }
+
+    /// The texts of the lines that carry a check mark, in order, the submenus included.
+    fn checked<A>(items: &[Item<A>]) -> Vec<String> {
+        let mut out = Vec::new();
+        for item in items {
+            match item {
+                Item::Action {
+                    text,
+                    checked: true,
+                    ..
+                } => out.push(text.clone()),
+                Item::Sub { items, .. } => out.extend(checked(items)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn an_audio_inputs_menu_is_logics_inputs_pairs_and_the_bus_submenu() {
+        let items = source_items(InputSource::Stereo(2), 4, |s| s);
+        let lines: Vec<&str> = items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Action { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "No Input",
+                "Input 1",
+                "Input 2",
+                "Input 3",
+                "Input 4",
+                "Input 1 + 2",
+                "Input 3 + 4"
+            ]
+        );
+        assert_eq!(checked(&items), ["Input 3 + 4"], "the pair in use");
+        let Some(Item::Sub {
+            text, items: bus, ..
+        }) = items.last()
+        else {
+            panic!("the Bus submenu comes last");
+        };
+        assert_eq!(text, "Bus");
+        let shown_buses: Vec<u16> = picks(&items)
+            .into_iter()
+            .filter_map(|(_, s)| match s {
+                InputSource::Bus(b) => Some(b),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            shown_buses,
+            (1..=256).collect::<Vec<u16>>(),
+            "all 256 buses"
+        );
+        // Buses 1 to 32 are listed directly, then the pages of 32 as submenus.
+        assert_eq!(
+            bus.iter()
+                .take_while(|i| !matches!(i, Item::Separator))
+                .count(),
+            32
+        );
+        let pages: Vec<&str> = bus
+            .iter()
+            .filter_map(|i| match i {
+                Item::Sub { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            pages,
+            [
+                "33 - 64",
+                "65 - 96",
+                "97 - 128",
+                "129 - 160",
+                "161 - 192",
+                "193 - 224",
+                "225 - 256"
+            ]
+        );
+    }
+
+    #[test]
+    fn no_input_and_a_bus_are_checked_and_a_device_without_inputs_lists_none() {
+        assert_eq!(
+            checked(&source_items(InputSource::None, 2, |s| s)),
+            ["No Input"]
+        );
+        let bus = source_items(InputSource::Bus(22), 0, |s| s);
+        assert_eq!(checked(&bus), ["Bus 22"]);
+        assert!(
+            !picks(&bus).iter().any(|(t, _)| t.starts_with("Input")),
+            "no device inputs"
+        );
+        assert!(picks(&source_items(InputSource::None, 2, |s| s))
+            .contains(&("Input 2".to_string(), InputSource::Mono(1))));
+    }
+
+    #[test]
+    fn an_aux_input_menu_is_the_bus_submenu_checked_on_its_bus() {
+        let items = aux_bus_items(9);
+        assert_eq!(
+            items.len(),
+            1,
+            "an Aux takes no device input, so no No Input"
+        );
+        assert_eq!(checked(&items), ["Bus 9"]);
+        let all = picks(&items);
+        assert_eq!(all.len(), 256);
+        assert!(all.contains(&("Bus 256".to_string(), 256)));
+    }
+
+    #[test]
+    fn the_instrument_menu_has_no_instrument_then_the_library_instruments() {
+        assert_eq!(checked(&instrument_items(None, |n| n)), ["No Instrument"]);
+        let sampler = instrument_items(Some("Sampler"), |n| n);
+        assert_eq!(checked(&sampler), ["Sampler"]);
+        assert_eq!(picks(&sampler)[0], ("No Instrument".to_string(), None));
+        assert!(picks(&sampler).contains(&("Drum Kit".to_string(), Some("Drum Kit"))));
+        // An instrument the Library has no line for is still listed, checked, first.
+        let odd = instrument_items(Some("Mystery Box"), |n| n);
+        assert_eq!(checked(&odd), ["Mystery Box"]);
+        assert_eq!(picks(&odd)[1].0, "Mystery Box");
+    }
+
+    #[test]
+    fn choosing_an_instrument_replaces_a_soundfont_and_no_instrument_clears_it() {
+        use crate::model::SoundFontUse;
+        let mut t = crate::model::Track::new("Keys", TrackKind::Instrument);
+        let sf = SoundFontUse {
+            path: "GM.sf2".into(),
+            bank: 0,
+            program: 0,
+        };
+        t.soundfont = Some(sf.clone());
+        pick_instrument(&mut t, Some("Sampler"));
+        assert_eq!(
+            t.soundfont,
+            Some(sf.clone()),
+            "the same instrument changes nothing"
+        );
+        pick_instrument(&mut t, Some("Drum Kit"));
+        assert_eq!(
+            (t.instrument, t.soundfont.clone()),
+            (Some("Drum Kit"), None)
+        );
+        t.soundfont = Some(sf);
+        pick_instrument(&mut t, None);
+        assert_eq!((t.instrument, t.soundfont.clone()), (None, None));
+    }
+
+    #[test]
+    fn the_port_menu_has_no_port_and_keeps_a_port_that_is_gone() {
+        let ports = ["Synth".to_string(), "IAC".to_string()];
+        let items = port_items(Some("Gone"), &ports, |p| p);
+        assert_eq!(checked(&items), ["Gone"]);
+        let names: Vec<String> = picks(&items).into_iter().map(|(t, _)| t).collect();
+        assert_eq!(names, ["No Port", "Gone", "Synth", "IAC"]);
+        let items = port_items(Some("IAC"), &ports, |p| p);
+        assert_eq!(checked(&items), ["IAC"]);
+        assert_eq!(picks(&items)[0], ("No Port".to_string(), None));
+        assert_eq!(checked(&port_items(None, &ports, |p| p)), ["No Port"]);
+    }
+
+    #[test]
+    fn every_kind_of_input_slot_draws_and_keeps_its_input() {
+        let mut h = crate::ui_test::Harness::new(1400.0, 700.0);
+        let mut s = UiState::new();
+        let mut p = Project::empty();
+        p.tracks.clear();
+        p.add_track(TrackKind::Audio);
+        p.add_track(TrackKind::Instrument);
+        p.add_track(TrackKind::Aux);
+        p.add_track(TrackKind::ExternalMidi);
+        p.tracks[0].input = InputSource::Bus(22);
+        p.tracks[1].instrument = None;
+        p.tracks[3].midi_port = Some("Synth".into());
+        p.selected_track = 0;
+        run(&mut h, &mut p, &mut s, 2);
+        assert_eq!(p.tracks[0].input, InputSource::Bus(22));
+        assert_eq!(p.tracks[1].instrument, None);
+        assert_eq!(p.tracks[3].midi_port.as_deref(), Some("Synth"));
+        assert_eq!(p.aux_bus_of(2), 1, "the Aux listens to the bus of its rank");
     }
 
     #[test]

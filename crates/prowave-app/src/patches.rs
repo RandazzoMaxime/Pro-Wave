@@ -4,7 +4,7 @@
 //!
 //! The built-in engine has a two-oscillator subtractive voice and an additive drawbar organ,
 //! so these are approximations of the instrument families, not sampled instruments.
-use crate::model::Track;
+use crate::model::{Track, TrackKind};
 use crate::track_icons::{icon_kind, IconKind};
 use prowave_engine::{Kit, SynthPatch, VoiceKind, Wave};
 
@@ -404,13 +404,19 @@ fn by_icon(kind: IconKind, name: &str) -> SynthPatch {
 }
 
 /// The synth patch a track should play: its Library category if a patch was loaded, else the
-/// instrument family implied by its name and icon.
+/// instrument family implied by its name and icon. A software instrument track with No
+/// Instrument plays nothing: its patch has no gain.
 pub fn synth_patch(t: &Track) -> SynthPatch {
     let p = match t.category {
         Some(cat) => by_category(cat, &t.name),
         None => by_icon(icon_kind(t), &t.name),
     };
-    vary(p, hash(&t.name))
+    let mut p = vary(p, hash(&t.name));
+    let instrument_track = matches!(t.kind, TrackKind::Instrument | TrackKind::Drummer);
+    if instrument_track && t.instrument.is_none() {
+        p.gain = 0.0;
+    }
+    p
 }
 
 #[cfg(test)]
@@ -448,6 +454,18 @@ mod tests {
         t.category = Some(category);
         t.name = name.to_string();
         t
+    }
+
+    #[test]
+    fn no_instrument_is_silent_and_an_instrument_plays() {
+        let mut t = track_with("Synthesizer", "Bright Saw Lead");
+        t.kind = TrackKind::Instrument;
+        assert!(synth_patch(&t).gain > 0.0);
+        t.instrument = None;
+        assert_eq!(synth_patch(&t).gain, 0.0);
+        // Audio tracks have no instrument and keep their patch as before.
+        t.kind = TrackKind::Audio;
+        assert!(synth_patch(&t).gain > 0.0);
     }
 
     #[test]

@@ -114,34 +114,44 @@ fn start_command(p: &Project) -> Command {
     }
 }
 
-/// The audio tracks whose I button is on.
+/// The audio tracks whose I button is on and whose input is a device channel (a track that
+/// hears a bus gets it through its route instead, see [`route_of`]).
 fn monitors_of(p: &Project) -> Vec<MonitorTrack> {
     p.tracks
         .iter()
         .enumerate()
         .filter(|(_, t)| t.kind == TrackKind::Audio && t.monitor)
-        .take(MAX_MONITORS)
-        .map(|(i, t)| {
+        .filter_map(|(i, t)| {
             let (channel, stereo) = match t.input {
                 InputSource::Mono(c) => (c, false),
                 InputSource::Stereo(c) => (c, true),
+                InputSource::None | InputSource::Bus(_) => return None,
             };
-            MonitorTrack {
+            Some(MonitorTrack {
                 track: i.min(usize::from(u16::MAX)) as u16,
                 channel,
                 stereo,
-            }
+            })
         })
+        .take(MAX_MONITORS)
         .collect()
 }
 
-/// Where track `i`'s signal goes: its sends, and for an Aux strip the bus it listens to.
+/// Where track `i`'s signal goes: its sends, for an Aux strip the bus it listens to, and for an
+/// audio track monitoring a bus the bus it hears.
 pub(crate) fn route_of(p: &Project, i: usize) -> Route {
     let Some(t) = p.tracks.get(i) else {
         return Route::default();
     };
+    // An audio track whose input is a bus hears it while its I button is on (as a device input
+    // is heard), through the strip that is fed from the bus.
+    let input_bus = match t.input {
+        InputSource::Bus(bus) if t.kind == TrackKind::Audio && t.monitor => bus,
+        _ => 0,
+    };
     let mut route = Route {
         bus_in: p.aux_bus_of(i),
+        input_bus,
         output: t.output,
         ..Route::default()
     };
@@ -1141,6 +1151,13 @@ mod tests {
     use crate::model::{Note, RegionParams, TrackKind, TrackParams};
     use prowave_engine::TempoMap;
 
+    /// An audio track with the given input and nothing else.
+    fn track_with_input(input: InputSource) -> Track {
+        let mut t = Track::new("Audio", TrackKind::Audio);
+        t.input = input;
+        t
+    }
+
     fn track(notes: Vec<Note>) -> Track {
         Track {
             name: "t".into(),
@@ -1195,6 +1212,30 @@ mod tests {
             pitch,
             vel,
         }
+    }
+
+    #[test]
+    fn a_bus_input_is_heard_through_the_route_only_while_monitoring() {
+        let mut p = Project::empty();
+        p.tracks.clear();
+        p.tracks.push(track_with_input(InputSource::Bus(22)));
+        assert_eq!(route_of(&p, 0).input_bus, 0, "not monitored, not heard");
+        assert!(monitors_of(&p).is_empty(), "a bus is not a device channel");
+        p.tracks[0].monitor = true;
+        assert_eq!(route_of(&p, 0).input_bus, 22);
+        assert!(
+            monitors_of(&p).is_empty(),
+            "heard from the mix, not the device"
+        );
+        p.tracks[0].input = InputSource::None;
+        assert_eq!(route_of(&p, 0).input_bus, 0);
+        p.tracks[0].input = InputSource::Stereo(2);
+        assert_eq!(route_of(&p, 0).input_bus, 0);
+        assert_eq!(
+            monitors_of(&p).len(),
+            1,
+            "a device input is monitored as before"
+        );
     }
 
     #[test]

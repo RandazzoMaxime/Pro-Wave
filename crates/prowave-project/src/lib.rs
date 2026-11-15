@@ -285,9 +285,15 @@ pub struct TrackDoc {
     /// The icon the user picked (`IconKind::name`); absent or unknown names give the automatic one.
     pub icon: Option<String>,
     /// Audio tracks: the first input channel they record (0 is Input 1), and whether they
-    /// record it and the next one as a stereo pair.
+    /// record it and the next one as a stereo pair. Files from before bus inputs have none of
+    /// the two fields below.
     pub input: u16,
     pub input_stereo: bool,
+    /// Audio tracks with a bus input (Logic's bus inputs): the bus, 1 to 256. 0 is no bus.
+    pub input_bus: u16,
+    /// Audio tracks with No Input: they record and monitor nothing (ignored when `input_bus`
+    /// names a bus).
+    pub input_none: bool,
     /// The bus the track plays into; 0 is Stereo Out.
     pub output: u16,
     /// The bus an Aux track was made to listen to; 0 is the bus of its rank among the Aux
@@ -448,6 +454,8 @@ impl Default for TrackDoc {
             icon: None,
             input: 0,
             input_stereo: false,
+            input_bus: 0,
+            input_none: false,
             output: 0,
             aux_bus: 0,
             midi_fx: Vec::new(),

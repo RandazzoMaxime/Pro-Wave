@@ -2124,6 +2124,26 @@ impl Project {
         }
     }
 
+    /// Makes Aux strip `i` listen to `bus` (its Input slot's Bus menu). The Aux strips that
+    /// listen to the bus of their rank are counted by rank, so they get their buses written
+    /// down first: picking a bus for one of them does not move the others.
+    pub fn set_aux_bus(&mut self, i: usize, bus: u16) {
+        let is_aux = |t: &Track| t.kind == TrackKind::Aux;
+        if !self.tracks.get(i).is_some_and(is_aux)
+            || !(1..=prowave_engine::MAX_BUSES as u16).contains(&bus)
+        {
+            return;
+        }
+        let ranked: Vec<(usize, u16)> = (0..self.tracks.len())
+            .filter(|&j| j != i && is_aux(&self.tracks[j]) && self.tracks[j].aux_bus == 0)
+            .map(|j| (j, self.aux_bus_of(j)))
+            .collect();
+        for (j, listens) in ranked {
+            self.tracks[j].aux_bus = listens;
+        }
+        self.tracks[i].aux_bus = bus;
+    }
+
     /// Whether track `i` is muted, by its own Mute or by its VCA's.
     pub fn is_muted(&self, i: usize) -> bool {
         self.tracks.get(i).is_some_and(|t| t.mute) || self.vca_of(i).is_some_and(|v| v.mute)
@@ -2498,6 +2518,32 @@ pub enum SigPart {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picking_a_bus_for_one_aux_leaves_the_others_on_their_buses() {
+        let mut p = Project::empty();
+        p.tracks.clear();
+        p.add_track(TrackKind::Aux);
+        p.add_track(TrackKind::Aux);
+        p.add_track(TrackKind::Aux);
+        assert_eq!([p.aux_bus_of(1), p.aux_bus_of(2)], [2, 3]);
+        // The first Aux takes Bus 9: the second and third keep Bus 2 and Bus 3.
+        p.set_aux_bus(0, 9);
+        assert_eq!(
+            [p.aux_bus_of(0), p.aux_bus_of(1), p.aux_bus_of(2)],
+            [9, 2, 3]
+        );
+        // Two Aux strips may listen to the same bus.
+        p.set_aux_bus(2, 2);
+        assert_eq!([p.aux_bus_of(1), p.aux_bus_of(2)], [2, 2]);
+        // Only Aux strips take a bus, and only buses that exist.
+        p.set_aux_bus(0, 0);
+        p.set_aux_bus(0, 257);
+        assert_eq!(p.aux_bus_of(0), 9);
+        p.add_track(TrackKind::Audio);
+        p.set_aux_bus(3, 5);
+        assert_eq!(p.tracks[3].aux_bus, 0);
+    }
 
     #[test]
     fn signature_parts_step_and_stop_at_their_ends() {
