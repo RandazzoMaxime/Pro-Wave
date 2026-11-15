@@ -7,6 +7,8 @@ being released into the GitHub Release notes, so keep one `## <version>` heading
 
 ### All systems (Windows, macOS, Linux)
 
+✅ **Tool menu as in Logic:** the Tracks area's tool button (the pointer with its chevron) opens Logic's tool menu, with all 17 tools in Logic's order, each with its icon and its name (in French, Outil Pointeur, Outil Crayon and so on). The check mark is on the current tool, the row under the pointer is blue, and the button shows the current tool's icon. Only the Pointer and the Fade tool work yet: the other 15 tools are greyed out and cannot be picked. Escape or a click elsewhere closes the menu. Not done yet: the arrow keys in the menu, and the other 15 tools.
+
 ✅ **Value and hidden pointer while dragging a volume or pan:** as in Logic, dragging a fader, a pan knob, a send level knob, a track header's volume slider or pan knob, the master volume or the Click Volume slider hides the mouse pointer and shows the value in a small dark label above the control (`Volume: -0.4 dB`, `Pan: -7`, `Send: -6.0 dB`) until the button is let go. The Inspector's pan knob also prints its value over its face while it is dragged.
 
 ✅ **Empty slots light up under the pointer:** an empty Audio FX slot or Sends slot in a channel strip now shows, while the pointer is over it, a pop-up button with its name and the up and down chevrons of a menu, as in Logic. Before, nothing changed and nothing said the slot could be clicked.

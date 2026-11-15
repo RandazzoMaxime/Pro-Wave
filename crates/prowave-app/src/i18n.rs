@@ -405,8 +405,8 @@ pub(crate) mod tests {
                 add(it);
             }
         }
-        for t in crate::tracks_area::TOOLS {
-            add(t);
+        for t in crate::tracks_area::TrackTool::MENU {
+            add(t.name());
         }
         for t in crate::tooltips::all_texts() {
             add(t);

@@ -16,8 +16,8 @@ use crate::widgets::{
 };
 use crate::{Bottom, UiState};
 use egui::{
-    pos2, vec2, Align2, Color32, FontId, Key, KeyboardShortcut, Modifiers, Painter, Pos2, Rect,
-    Sense, Shape, Stroke, StrokeKind, Ui,
+    pos2, vec2, Align2, Color32, CornerRadius, FontId, Frame, Key, KeyboardShortcut, Margin,
+    Modifiers, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
 };
 
 const TOOLBAR_H: f32 = 30.0;
@@ -97,26 +97,6 @@ impl DragMode {
     }
 }
 
-/// Where the Fade tool is in [`TOOLS`].
-const FADE_TOOL: usize = 9;
-
-pub(crate) const TOOLS: [&str; 14] = [
-    "Pointer Tool",
-    "Pencil Tool",
-    "Eraser Tool",
-    "Text Tool",
-    "Scissors Tool",
-    "Glue Tool",
-    "Solo Tool",
-    "Mute Tool",
-    "Zoom Tool",
-    "Fade Tool",
-    "Automation Select Tool",
-    "Automation Curve Tool",
-    "Marquee Tool",
-    "Flex Tool",
-];
-
 /// A Normalize Region Gain scan running on its own thread: reading a long recording to find
 /// its loudest sample takes seconds, which would freeze the window if done on the UI thread.
 pub struct NormalizeJob {
@@ -127,13 +107,92 @@ pub struct NormalizeJob {
     result: std::sync::mpsc::Receiver<Result<f32, String>>,
 }
 
-/// The tool the pointer has in the Tracks area (Logic's left-click tool).
+/// The tool the pointer has in the Tracks area (Logic's left-click tool). The variants are the
+/// tools of Logic's tool menu, in its order. Only the Pointer and the Fade tool do something
+/// yet; the others are shown greyed out in the menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TrackTool {
     Pointer,
+    Pencil,
+    Eraser,
+    Text,
+    Scissors,
+    Glue,
+    Solo,
+    Mute,
+    Zoom,
     /// Drag on an audio region to set its fade in (left half) or fade out (right half).
     Fade,
+    AutomationSelect,
+    AutomationCurve,
+    Marquee,
+    Flex,
+    Gain,
+    Slide,
+    Rotate,
 }
+
+impl TrackTool {
+    /// Every tool, in the order of Logic's tool menu.
+    pub(crate) const MENU: [TrackTool; 17] = [
+        TrackTool::Pointer,
+        TrackTool::Pencil,
+        TrackTool::Eraser,
+        TrackTool::Text,
+        TrackTool::Scissors,
+        TrackTool::Glue,
+        TrackTool::Solo,
+        TrackTool::Mute,
+        TrackTool::Zoom,
+        TrackTool::Fade,
+        TrackTool::AutomationSelect,
+        TrackTool::AutomationCurve,
+        TrackTool::Marquee,
+        TrackTool::Flex,
+        TrackTool::Gain,
+        TrackTool::Slide,
+        TrackTool::Rotate,
+    ];
+
+    /// The name the menu shows. It is also the text to translate.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            TrackTool::Pointer => "Pointer Tool",
+            TrackTool::Pencil => "Pencil Tool",
+            TrackTool::Eraser => "Eraser Tool",
+            TrackTool::Text => "Text Tool",
+            TrackTool::Scissors => "Scissors Tool",
+            TrackTool::Glue => "Glue Tool",
+            TrackTool::Solo => "Solo Tool",
+            TrackTool::Mute => "Mute Tool",
+            TrackTool::Zoom => "Zoom Tool",
+            TrackTool::Fade => "Fade Tool",
+            TrackTool::AutomationSelect => "Automation Select Tool",
+            TrackTool::AutomationCurve => "Automation Curve Tool",
+            TrackTool::Marquee => "Marquee Tool",
+            TrackTool::Flex => "Flex Tool",
+            TrackTool::Gain => "Gain Tool",
+            TrackTool::Slide => "Slide Tool",
+            TrackTool::Rotate => "Rotate Tool",
+        }
+    }
+
+    /// Whether the tool does something yet. A tool that does not is greyed out in the menu and
+    /// cannot be picked, so the Tracks area never has a tool it cannot use.
+    pub(crate) fn implemented(self) -> bool {
+        matches!(self, TrackTool::Pointer | TrackTool::Fade)
+    }
+}
+
+/// Logic's tool menu: its width and the height of a row, in points.
+const TOOL_MENU_W: f32 = 240.0;
+const TOOL_ROW_H: f32 = 24.0;
+const TOOL_MENU_BG: Color32 = Color32::from_rgb(0x2b, 0x2b, 0x2d);
+/// The row under the pointer, and the text on it.
+const TOOL_ROW_LIT: Color32 = Color32::from_rgb(20, 70, 190);
+const TOOL_ROW_TEXT: Color32 = Color32::from_rgb(0xd2, 0xd2, 0xd2);
+/// The name and icon of a tool the app does not have yet.
+const TOOL_ROW_OFF: Color32 = Color32::from_rgb(0x5a, 0x5a, 0x5a);
 
 pub struct TracksView {
     /// Width of one bar in points (horizontal zoom).
@@ -720,22 +779,180 @@ fn draw_catch_icon(g: &Painter, r: Rect, c: Color32) {
     ));
 }
 
-fn draw_pointer(g: &Painter, at: Pos2, c: Color32) {
-    let pts = vec![
-        at + vec2(-3.0, -7.0),
-        at + vec2(5.0, 1.0),
-        at + vec2(1.0, 1.5),
-        at + vec2(-1.0, 6.0),
-        at + vec2(-3.0, -7.0),
-    ];
-    g.add(Shape::line(pts, stroke(c)));
-}
-
-/// The Fade tool's icon: a ramp down to a baseline.
-fn draw_fade_tool(g: &Painter, at: Pos2, c: Color32) {
-    g.line_segment([at + vec2(-6.0, 5.0), at + vec2(6.0, 5.0)], stroke(c));
-    g.line_segment([at + vec2(-6.0, 5.0), at + vec2(-6.0, -5.0)], stroke(c));
-    g.line_segment([at + vec2(-6.0, -5.0), at + vec2(6.0, 5.0)], stroke(c));
+/// The icon of `tool`, drawn in the square `rect` (about 14 points) in `c`. Each icon is a few
+/// strokes on a grid of about 12 points, simple enough to read at the size of a menu row.
+fn draw_tool_icon(g: &Painter, rect: Rect, tool: TrackTool, c: Color32) {
+    let at = rect.center();
+    let s = stroke(c);
+    // A polyline through points given relative to the icon's centre.
+    let line = |pts: &[(f32, f32)]| {
+        Shape::line(
+            pts.iter()
+                .map(|&(x, y)| at + vec2(x, y))
+                .collect::<Vec<_>>(),
+            s,
+        )
+    };
+    let closed = |pts: &[(f32, f32)]| {
+        Shape::closed_line(
+            pts.iter()
+                .map(|&(x, y)| at + vec2(x, y))
+                .collect::<Vec<_>>(),
+            s,
+        )
+    };
+    match tool {
+        TrackTool::Pointer => {
+            g.add(closed(&[
+                (-4.0, -6.0),
+                (-4.0, 4.0),
+                (-1.2, 1.6),
+                (0.6, 5.6),
+                (2.2, 4.9),
+                (0.4, 1.0),
+                (3.6, 1.0),
+            ]));
+        }
+        TrackTool::Pencil => {
+            g.add(closed(&[
+                (-3.4, 2.4),
+                (2.4, -3.4),
+                (4.4, -1.4),
+                (-1.4, 4.4),
+            ]));
+            g.add(line(&[(-3.4, 2.4), (-5.6, 5.6), (-1.4, 4.4)]));
+        }
+        TrackTool::Eraser => {
+            g.add(closed(&[
+                (-5.5, 0.5),
+                (0.5, -5.5),
+                (5.5, -0.5),
+                (-0.5, 5.5),
+            ]));
+            g.add(line(&[(-3.0, 3.0), (3.0, -3.0)]));
+        }
+        TrackTool::Text => {
+            g.add(line(&[(0.0, -6.0), (0.0, 6.0)]));
+            g.add(line(&[(-3.0, -6.0), (3.0, -6.0)]));
+            g.add(line(&[(-3.0, 6.0), (3.0, 6.0)]));
+        }
+        TrackTool::Scissors => {
+            g.circle_stroke(at + vec2(-3.5, 4.0), 2.2, s);
+            g.circle_stroke(at + vec2(3.5, 4.0), 2.2, s);
+            g.add(line(&[(-2.0, 1.8), (4.5, -6.0)]));
+            g.add(line(&[(2.0, 1.8), (-4.5, -6.0)]));
+        }
+        TrackTool::Glue => {
+            // A tag: a pointed label with a hole near its point.
+            g.add(closed(&[
+                (-6.0, 0.0),
+                (-2.0, -4.5),
+                (5.0, -4.5),
+                (5.0, 4.5),
+                (-2.0, 4.5),
+            ]));
+            g.circle_stroke(at + vec2(-2.6, 0.0), 1.2, s);
+        }
+        TrackTool::Solo => {
+            g.add(line(&[
+                (4.0, -4.0),
+                (0.0, -6.0),
+                (-4.0, -4.0),
+                (-4.0, -2.0),
+                (0.0, 0.0),
+                (4.0, 2.0),
+                (4.0, 4.0),
+                (0.0, 6.0),
+                (-4.0, 4.0),
+            ]));
+        }
+        TrackTool::Mute => {
+            g.add(line(&[
+                (-5.0, 6.0),
+                (-5.0, -6.0),
+                (0.0, 1.0),
+                (5.0, -6.0),
+                (5.0, 6.0),
+            ]));
+        }
+        TrackTool::Zoom => {
+            g.circle_stroke(at + vec2(-1.0, -1.0), 4.3, s);
+            g.add(line(&[(2.3, 2.3), (5.8, 5.8)]));
+        }
+        TrackTool::Fade => {
+            g.add(line(&[(-5.0, -5.0), (5.0, 5.0)]));
+        }
+        TrackTool::AutomationSelect => {
+            // A small pointer over an automation curve.
+            g.add(closed(&[
+                (-6.0, -6.0),
+                (-6.0, 2.0),
+                (-3.8, 0.2),
+                (-2.4, 3.6),
+                (-1.2, 3.1),
+                (-2.6, -0.2),
+                (0.4, -0.2),
+            ]));
+            g.add(line(&[(0.0, 6.0), (2.5, 2.5), (4.5, 4.0), (6.0, 0.0)]));
+        }
+        TrackTool::AutomationCurve => {
+            g.add(line(&[(-6.0, 5.0), (-2.0, 5.0), (1.0, -2.0), (6.0, -2.0)]));
+            g.add(line(&[(2.8, -5.2), (6.0, -2.0), (2.8, 1.2)]));
+        }
+        TrackTool::Marquee => {
+            // A plus sign with gaps in its arms.
+            g.add(line(&[(-6.0, 0.0), (-2.0, 0.0)]));
+            g.add(line(&[(2.0, 0.0), (6.0, 0.0)]));
+            g.add(line(&[(0.0, -6.0), (0.0, -2.0)]));
+            g.add(line(&[(0.0, 2.0), (0.0, 6.0)]));
+        }
+        TrackTool::Flex => {
+            // Two brackets with two short lines between them.
+            g.add(line(&[
+                (-3.0, -6.0),
+                (-6.0, -6.0),
+                (-6.0, 6.0),
+                (-3.0, 6.0),
+            ]));
+            g.add(line(&[(3.0, -6.0), (6.0, -6.0), (6.0, 6.0), (3.0, 6.0)]));
+            g.add(line(&[(-2.0, -2.0), (2.0, -2.0)]));
+            g.add(line(&[(-2.0, 2.0), (2.0, 2.0)]));
+        }
+        TrackTool::Gain => {
+            // Waveform bars beside an up and down arrow.
+            g.add(line(&[(-5.5, -2.0), (-5.5, 2.0)]));
+            g.add(line(&[(-2.5, -4.0), (-2.5, 4.0)]));
+            g.add(line(&[(0.5, -2.5), (0.5, 2.5)]));
+            g.add(line(&[(4.5, -6.0), (4.5, 6.0)]));
+            g.add(line(&[(2.8, -4.3), (4.5, -6.0), (6.2, -4.3)]));
+            g.add(line(&[(2.8, 4.3), (4.5, 6.0), (6.2, 4.3)]));
+        }
+        TrackTool::Slide => {
+            // A left and right arrow in a rounded box.
+            g.rect_stroke(
+                Rect::from_center_size(at, vec2(13.0, 8.0)),
+                2.5,
+                s,
+                StrokeKind::Middle,
+            );
+            g.add(line(&[(-3.0, 0.0), (3.0, 0.0)]));
+            g.add(line(&[(-1.3, -1.6), (-3.0, 0.0), (-1.3, 1.6)]));
+            g.add(line(&[(1.3, -1.6), (3.0, 0.0), (1.3, 1.6)]));
+        }
+        TrackTool::Rotate => {
+            // Two small arrows, one each way, in a rounded box.
+            g.rect_stroke(
+                Rect::from_center_size(at, vec2(13.0, 8.0)),
+                2.5,
+                s,
+                StrokeKind::Middle,
+            );
+            g.add(line(&[(-3.0, -1.5), (2.5, -1.5)]));
+            g.add(line(&[(0.9, -3.0), (2.5, -1.5), (0.9, 0.0)]));
+            g.add(line(&[(3.0, 1.5), (-2.5, 1.5)]));
+            g.add(line(&[(-0.9, 0.0), (-2.5, 1.5), (-0.9, 3.0)]));
+        }
+    }
 }
 
 fn draw_crosshair(g: &Painter, at: Pos2, c: Color32) {
@@ -1105,7 +1322,8 @@ fn snap_menu(ui: &Ui, g: &Painter, v: &mut TracksView, rx: f32, cy: f32) -> f32 
     label.left() - 12.0
 }
 
-/// Left-click and Command-click tool menus ending at `rx` (only the Pointer works so far).
+/// The two tool buttons ending at `rx`: the left-click tool (its icon shows the current tool)
+/// and the Command-click tool.
 fn tool_menus(ui: &Ui, g: &Painter, v: &mut TracksView, rx: f32, cy: f32) {
     for (i, key) in ["tool_l", "tool_r"].iter().enumerate() {
         let r = Rect::from_min_size(
@@ -1117,10 +1335,13 @@ fn tool_menus(ui: &Ui, g: &Painter, v: &mut TracksView, rx: f32, cy: f32) {
             g.rect_filled(r, 4.0, Color32::from_white_alpha(14));
         }
         let icon_at = pos2(r.left() + 13.0, cy);
-        if i == 0 && v.tool == TrackTool::Fade {
-            draw_fade_tool(g, icon_at, TEXT);
-        } else if i == 0 {
-            draw_pointer(g, icon_at, TEXT);
+        if i == 0 {
+            draw_tool_icon(
+                g,
+                Rect::from_center_size(icon_at, vec2(14.0, 14.0)),
+                v.tool,
+                TEXT,
+            );
         } else {
             draw_crosshair(g, icon_at, TEXT);
         }
@@ -1133,28 +1354,83 @@ fn tool_menus(ui: &Ui, g: &Painter, v: &mut TracksView, rx: f32, cy: f32) {
             ],
             stroke(TEXT_DIM),
         ));
-        egui::Popup::menu(&resp).show(|ui| {
-            ui.set_min_width(220.0);
-            for (n, t) in TOOLS.iter().enumerate() {
-                let tool = match n {
-                    0 => Some(TrackTool::Pointer),
-                    FADE_TOOL => Some(TrackTool::Fade),
-                    _ => None,
-                };
-                match tool {
-                    Some(tool) if i == 0 => {
-                        if ui.selectable_label(v.tool == tool, tr(t)).clicked() {
-                            v.tool = tool;
-                            ui.close();
-                        }
+        if i == 0 {
+            egui::Popup::menu(&resp)
+                .frame(tool_menu_frame())
+                .show(|ui| tool_menu_rows(ui, v));
+        } else {
+            // The Command-click tool keeps its own plain menu: the Pointer is shown as the
+            // current tool, and nothing in it can be picked yet.
+            egui::Popup::menu(&resp).show(|ui| {
+                ui.set_min_width(220.0);
+                for t in TrackTool::MENU {
+                    if t == TrackTool::Pointer {
+                        let _ = ui.selectable_label(true, tr(t.name()));
+                    } else {
+                        todo_item(ui, t.name());
                     }
-                    Some(TrackTool::Pointer) => {
-                        let _ = ui.selectable_label(true, tr(t));
-                    }
-                    _ => todo_item(ui, t),
                 }
-            }
-        });
+            });
+        }
+    }
+}
+
+/// The dark rounded panel behind the tool menu.
+fn tool_menu_frame() -> Frame {
+    Frame::new()
+        .fill(TOOL_MENU_BG)
+        .stroke(Stroke::new(1.0, Color32::from_rgb(0x18, 0x18, 0x18)))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::symmetric(0, 4))
+}
+
+/// The rows of Logic's tool menu, one per tool: a check mark for the current tool, the tool's
+/// icon, then its name. The row under the pointer is blue. A tool the app does not have yet is
+/// greyed out and cannot be picked; picking one closes the menu.
+fn tool_menu_rows(ui: &mut Ui, v: &mut TracksView) {
+    ui.set_width(TOOL_MENU_W);
+    for t in TrackTool::MENU {
+        let (rect, _) = ui.allocate_exact_size(vec2(TOOL_MENU_W, TOOL_ROW_H), Sense::hover());
+        let resp = ui.interact(rect, id(("tool_row", t.name())), Sense::click());
+        let enabled = t.implemented();
+        let lit = enabled && resp.hovered();
+        let ink = if !enabled {
+            TOOL_ROW_OFF
+        } else if lit {
+            Color32::WHITE
+        } else {
+            TOOL_ROW_TEXT
+        };
+        let mid = rect.center().y;
+        let g = ui.painter();
+        if lit {
+            g.rect_filled(rect.shrink2(vec2(4.0, 0.0)), 4.0, TOOL_ROW_LIT);
+        }
+        if v.tool == t {
+            // The check mark is drawn with two strokes: the built-in font has no tick.
+            let c = pos2(rect.left() + 14.0, mid);
+            g.add(Shape::line(
+                vec![
+                    c + vec2(-4.0, 0.0),
+                    c + vec2(-1.5, 2.5),
+                    c + vec2(4.0, -3.0),
+                ],
+                stroke(ink),
+            ));
+        }
+        let icon = Rect::from_center_size(pos2(rect.left() + 32.0, mid), vec2(14.0, 14.0));
+        draw_tool_icon(g, icon, t, ink);
+        g.text(
+            pos2(rect.left() + 48.0, mid),
+            Align2::LEFT_CENTER,
+            tr(t.name()),
+            FontId::proportional(13.0),
+            ink,
+        );
+        if enabled && resp.clicked() {
+            v.tool = t;
+            ui.close();
+        }
     }
 }
 
@@ -4280,5 +4556,162 @@ mod waveform_scale_tests {
         assert_eq!(display_amp(f32::NAN), 0.0);
         assert_eq!(display_amp(f32::INFINITY), 0.0);
         assert!(display_amp(100.0).is_finite() && display_amp(100.0) > 1.0);
+    }
+}
+
+#[cfg(test)]
+mod tool_menu_tests {
+    use super::*;
+    use crate::i18n::{tr_in, Lang};
+    use crate::mixer::Meters;
+    use crate::ui_test::Harness;
+    use egui::{Event, Key};
+
+    #[test]
+    fn the_tool_menu_lists_logics_seventeen_tools_in_its_order() {
+        let names: Vec<&str> = TrackTool::MENU.iter().map(|t| t.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "Pointer Tool",
+                "Pencil Tool",
+                "Eraser Tool",
+                "Text Tool",
+                "Scissors Tool",
+                "Glue Tool",
+                "Solo Tool",
+                "Mute Tool",
+                "Zoom Tool",
+                "Fade Tool",
+                "Automation Select Tool",
+                "Automation Curve Tool",
+                "Marquee Tool",
+                "Flex Tool",
+                "Gain Tool",
+                "Slide Tool",
+                "Rotate Tool",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_french_menu_has_logics_names() {
+        let french: Vec<&str> = TrackTool::MENU
+            .iter()
+            .map(|t| tr_in(Lang::Fr, t.name()))
+            .collect();
+        assert_eq!(
+            french,
+            [
+                "Outil Pointeur",
+                "Outil Crayon",
+                "Outil Gomme",
+                "Outil Texte",
+                "Outil Ciseaux",
+                "Outil Relier",
+                "Outil Solo",
+                "Outil Mute",
+                "Outil Zoom",
+                "Outil Fondu",
+                "Outil Sélection d’automation",
+                "Outil Courbe d’automation",
+                "Outil Sélecteur",
+                "Outil Flex",
+                "Outil Gain",
+                "Outil Coulisser",
+                "Outil Pivoter",
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_pointer_and_the_fade_tool_work_yet() {
+        let working: Vec<TrackTool> = TrackTool::MENU
+            .into_iter()
+            .filter(|t| t.implemented())
+            .collect();
+        assert_eq!(working, [TrackTool::Pointer, TrackTool::Fade]);
+    }
+
+    /// The Tracks area drawn for one frame with `events`.
+    fn run(h: &mut Harness, p: &mut Project, s: &mut UiState, events: Vec<Event>) {
+        let meters = Meters::default();
+        h.frame(events, |ui| show(ui, p, s, &meters));
+    }
+
+    /// Clicks the middle of the widget `key` as the last frame drew it.
+    fn click_widget(h: &mut Harness, p: &mut Project, s: &mut UiState, key: egui::Id) {
+        let at = h
+            .ctx
+            .read_response(key)
+            .expect("the widget was drawn by the last frame")
+            .rect
+            .center();
+        let meters = Meters::default();
+        h.click(at, |ui| show(ui, p, s, &meters));
+    }
+
+    /// Opens the tool menu with a click on its button and lets it draw its rows.
+    fn open_tool_menu(h: &mut Harness, p: &mut Project, s: &mut UiState) {
+        let meters = Meters::default();
+        for _ in 0..2 {
+            run(h, p, s, vec![]);
+        }
+        click_widget(h, p, s, id("tool_l"));
+        for _ in 0..2 {
+            h.frame(vec![], |ui| show(ui, p, s, &meters));
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_row_picks_that_tool_and_closes_the_menu() {
+        let (mut p, mut s) = (Project::empty(), UiState::new());
+        let mut h = Harness::new(1200.0, 600.0);
+        assert_eq!(s.tracks.tool, TrackTool::Pointer);
+        open_tool_menu(&mut h, &mut p, &mut s);
+        click_widget(&mut h, &mut p, &mut s, id(("tool_row", "Fade Tool")));
+        run(&mut h, &mut p, &mut s, vec![]);
+        assert_eq!(s.tracks.tool, TrackTool::Fade);
+        let button = h.ctx.read_response(id("tool_l")).expect("the button");
+        assert!(
+            !egui::Popup::is_id_open(&h.ctx, egui::Popup::default_response_id(&button)),
+            "the menu closes once a tool is picked"
+        );
+    }
+
+    #[test]
+    fn a_greyed_out_tool_cannot_be_picked() {
+        let (mut p, mut s) = (Project::empty(), UiState::new());
+        let mut h = Harness::new(1200.0, 600.0);
+        open_tool_menu(&mut h, &mut p, &mut s);
+        click_widget(&mut h, &mut p, &mut s, id(("tool_row", "Pencil Tool")));
+        run(&mut h, &mut p, &mut s, vec![]);
+        assert_eq!(
+            s.tracks.tool,
+            TrackTool::Pointer,
+            "the Pencil does nothing yet"
+        );
+    }
+
+    #[test]
+    fn escape_closes_the_tool_menu_without_a_pick() {
+        let (mut p, mut s) = (Project::empty(), UiState::new());
+        let mut h = Harness::new(1200.0, 600.0);
+        open_tool_menu(&mut h, &mut p, &mut s);
+        let escape = Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&mut h, &mut p, &mut s, vec![escape]);
+        run(&mut h, &mut p, &mut s, vec![]);
+        let button = h.ctx.read_response(id("tool_l")).expect("the button");
+        assert!(!egui::Popup::is_id_open(
+            &h.ctx,
+            egui::Popup::default_response_id(&button)
+        ));
+        assert_eq!(s.tracks.tool, TrackTool::Pointer);
     }
 }
