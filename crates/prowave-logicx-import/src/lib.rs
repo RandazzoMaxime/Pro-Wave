@@ -151,17 +151,40 @@ pub fn read(path: &Path) -> Result<Project, Error> {
 pub fn read_full(path: &Path) -> Result<FullProject, Error> {
     let info = read(path)?;
     let bundle = locate_bundle(path)?;
-    let project_data = bundle
+    let alternative_dir = bundle
         .join("Alternatives")
-        .join(format!("{:03}", info.alternative))
-        .join("ProjectData");
+        .join(format!("{:03}", info.alternative));
+    let project_data = alternative_dir.join("ProjectData");
     let bytes = read_project_data(&bundle, &project_data)?;
-    let assembly = project_data::assemble(&bytes, &project_data.display().to_string())?;
+    let metadata = read_plist(&bundle, &alternative_dir.join("MetaData.plist"))?;
+    let audio_files = string_list(&metadata, "AudioFiles");
+    let assembly =
+        project_data::assemble(&bytes, &project_data.display().to_string(), &audio_files)?;
     Ok(FullProject {
         info,
         tracks: assembly.tracks,
         unassigned_plugins: assembly.unassigned,
+        audio_regions: assembly.audio_regions,
+        ticks_per_quarter: TICKS_PER_QUARTER,
     })
+}
+
+/// The ticks per quarter note of the note times. See [`FullProject::ticks_per_quarter`].
+const TICKS_PER_QUARTER: u32 = 240;
+
+/// The strings of an array in a plist (such as `AudioFiles`), in order; other entries are
+/// skipped.
+fn string_list(dictionary: &Dictionary, key: &str) -> Vec<String> {
+    match lookup(dictionary, key) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| match value {
+                Value::String(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Reads `ProjectData` whole, after the envelope checks and within the size cap.

@@ -64,8 +64,8 @@ pub struct PluginSlot {
     pub state: Option<Vec<u8>>,
 }
 
-/// One note of a MIDI region. Nothing fills these in yet: the note records of `ProjectData`
-/// are not decoded.
+/// One note of a MIDI region. The pitch, velocity and times were read from the note records of
+/// `ProjectData` and matched against the piano roll the user showed (three notes, B2, D3, E3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MidiNote {
     /// The MIDI note number, 0 to 127.
@@ -78,29 +78,35 @@ pub struct MidiNote {
     pub length_ticks: u64,
 }
 
-/// A MIDI region on a track. Nothing fills these in yet: see [`MidiNote`].
+/// A MIDI region on a track: the sequence the track plays. Its notes are read from the event
+/// records that follow the sequence. The region's own start and length are not located yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MidiRegion {
-    /// The region name, when the project stores one.
-    pub name: Option<String>,
-    /// The start in ticks at 960 pulses per quarter note.
-    pub start_tick: u64,
-    /// The length in ticks at 960 pulses per quarter note.
-    pub length_ticks: u64,
-    /// The notes of the region.
+    /// The region name (the track name, as Logic names a region after its track).
+    pub name: String,
+    /// The start in ticks. Not located yet, so `None`.
+    pub start_tick: Option<u64>,
+    /// The length in ticks. Not located yet, so `None`.
+    pub length_ticks: Option<u64>,
+    /// The notes, sorted by start. Their times are relative to the origin the note records are
+    /// measured from (see [`crate::FullProject::ticks_per_quarter`] and `LOGICX-FORMAT-SPEC.md`).
     pub notes: Vec<MidiNote>,
 }
 
-/// An audio region on a track. Nothing fills these in yet: the audio region records of
-/// `ProjectData` are not decoded.
+/// An audio region record (`gRuA` in `ProjectData`). The name and the audio file are read.
+/// The start and the length are not located in the record yet, so they are `None`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AudioRegion {
-    /// The audio file the region plays, relative to `Media/Audio Files/`.
-    pub file: String,
-    /// The start in ticks at 960 pulses per quarter note.
-    pub start_tick: u64,
-    /// The length in ticks at 960 pulses per quarter note.
-    pub length_ticks: u64,
+    /// The region name as the record stores it (`Inst 1_bip`, or `Inst 1_bip.1` for a second
+    /// region on the same file).
+    pub name: String,
+    /// The file in `Media/Audio Files/` whose name the region shares, from `MetaData.plist`.
+    /// `None` when no listed file matches.
+    pub file: Option<String>,
+    /// The start in ticks at 960 pulses per quarter note. Not located yet.
+    pub start_tick: Option<u64>,
+    /// The length in ticks at 960 pulses per quarter note. Not located yet.
+    pub length_ticks: Option<u64>,
 }
 
 /// One channel strip of the project.
@@ -114,9 +120,15 @@ pub struct Track {
     /// from one project: it marks the three tracks the metadata counts (`NumberOfTracks=3`),
     /// but its meaning is not confirmed.
     pub active: bool,
-    /// The fader level in decibels. Not decoded yet, so `None`.
+    /// The fader level in decibels. `None`: the byte below is read, but its curve to dB is not
+    /// known yet.
     pub volume_db: Option<f32>,
-    /// The pan position, from -1 (left) to 1 (right). Not decoded yet, so `None`.
+    /// The fader byte of the channel record (offset 121 of the strip's `OCuA` record). It is 90
+    /// on the default strips (0 dB on the project the reader was built against) and 100 and 117
+    /// on the two strips the user moved.
+    pub fader_raw: Option<u8>,
+    /// The pan in Logic's scale, -64 (hard left) to +63 (hard right), read from byte 125 of the
+    /// channel record. The default strips hold 64, which the reader maps to 0: centre.
     pub pan: Option<f32>,
     /// Whether the strip is muted. Not decoded yet, so `None`.
     pub mute: Option<bool>,
@@ -124,16 +136,14 @@ pub struct Track {
     pub solo: Option<bool>,
     /// The insert plug-ins of the strip, in slot order.
     pub plugins: Vec<PluginSlot>,
-    /// The MIDI regions of the strip. Empty until the note records are decoded.
+    /// The MIDI regions of the strip. Empty until the note layout is verified.
     pub midi_regions: Vec<MidiRegion>,
-    /// The audio regions of the strip. Empty until the audio region records are decoded.
-    pub audio_regions: Vec<AudioRegion>,
     /// The instrument files the strip's sampler refers to, such as `Classic Bass Finger.exs`.
     pub instrument_files: Vec<String>,
 }
 
-/// A whole project: the bundle's metadata, every channel strip, and the plug-ins that could
-/// not be attached to a strip.
+/// A whole project: the bundle's metadata, every channel strip, the plug-ins that could not be
+/// attached to a strip, and the audio regions the file holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FullProject {
     /// The metadata the bundle envelope gives (see [`crate::read`]).
@@ -142,4 +152,10 @@ pub struct FullProject {
     pub tracks: Vec<Track>,
     /// Plug-ins that belong to no active strip, such as the metronome.
     pub unassigned_plugins: Vec<PluginSlot>,
+    /// Every audio region record, in file order. Their owning track is not decoded.
+    pub audio_regions: Vec<AudioRegion>,
+    /// The ticks per quarter note of the note and region times. The file's note times fit 240
+    /// per beat (against the piano roll the user showed), not Logic's usual 960. This value is
+    /// inferred from that fit, not read from a field of the file.
+    pub ticks_per_quarter: u32,
 }

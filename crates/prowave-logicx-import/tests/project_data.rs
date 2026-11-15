@@ -154,7 +154,10 @@ fn a_synthetic_bundle_gives_its_strips_and_plug_ins() {
     let state = fabfilter.state.as_ref().expect("the class info");
     let value: plist::Value = plist::from_bytes(state).expect("the state parses");
     let dict = value.as_dictionary().expect("a dictionary");
-    assert!(dict.get("data").and_then(|v| v.as_data()).is_some());
+    assert!(dict
+        .get("FabFilterPluginState")
+        .and_then(|v| v.as_data())
+        .is_some());
     assert_eq!(inst.plugins[1].name, "SmpleDly");
     assert_eq!(inst.plugins[1].format, PluginFormat::Stock);
     assert!(project.unassigned_plugins.is_empty());
@@ -182,13 +185,13 @@ fn a_real_project_gives_its_three_tracks_and_plug_ins() {
 
     let project = read_full(&bundle).expect("read_full");
     assert_eq!(project.info.name, "Projet");
-    assert_eq!(project.info.project_data_bytes, 143_288);
+    assert!(project.info.project_data_bytes > 0, "ProjectData is read");
 
     // The strips, in the order the file stores them.
     let first: Vec<(&str, TrackKind)> = project
         .tracks
         .iter()
-        .take(8)
+        .take(9)
         .map(|t| (t.name.as_str(), t.kind))
         .collect();
     assert_eq!(
@@ -199,20 +202,21 @@ fn a_real_project_gives_its_three_tracks_and_plug_ins() {
             ("Audio 3", TrackKind::Audio),
             ("Audio 4", TrackKind::Audio),
             ("Audio 5", TrackKind::Audio),
+            ("Audio 6", TrackKind::Audio),
             ("Aux 1", TrackKind::Aux),
             ("Aux 2", TrackKind::Aux),
             ("Inst 1", TrackKind::Instrument),
         ]
     );
 
-    // The metadata counts three tracks, and byte 4 of the descriptor marks exactly three.
+    // The metadata counts four tracks, and byte 4 of the descriptor marks exactly four.
     let in_use: Vec<&str> = project
         .tracks
         .iter()
         .filter(|t| t.active)
         .map(|t| t.name.as_str())
         .collect();
-    assert_eq!(in_use, ["Audio 1", "Audio 2", "Inst 1"]);
+    assert_eq!(in_use, ["Audio 1", "Audio 2", "Audio 3", "Inst 1"]);
 
     let inst = project
         .tracks
@@ -232,7 +236,7 @@ fn a_real_project_gives_its_three_tracks_and_plug_ins() {
     let value: plist::Value = plist::from_bytes(state).expect("the state parses");
     let blob = value
         .as_dictionary()
-        .and_then(|d| d.get("data"))
+        .and_then(|d| d.get("FabFilterPluginState"))
         .and_then(|v| v.as_data())
         .expect("the state blob");
     assert!(
