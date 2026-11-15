@@ -886,3 +886,6 @@ Loop Browser = Explorateur de boucles
 File Browser = Explorateur de fichiers
 Record Enable: arm the track for recording = Armer l'enregistrement : préparer la piste à enregistrer
 Input Monitoring: hear the input of the track = Monitoring d'entrée : écouter l'entrée de la piste
+the engine did not take the project in time; no file was written = le moteur n'a pas pris le projet à temps ; aucun fichier n'a été écrit
+the bounce has not finished = le bounce n'est pas terminé
+cannot bounce: there is no audio output = impossible de faire le bounce : aucune sortie audio

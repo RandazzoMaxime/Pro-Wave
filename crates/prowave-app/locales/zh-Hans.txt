@@ -886,3 +886,6 @@ Loop Browser = 循环浏览器
 File Browser = 文件浏览器
 Record Enable: arm the track for recording = 录音准备：让轨道准备录音
 Input Monitoring: hear the input of the track = 输入监听：听到轨道的输入
+the engine did not take the project in time; no file was written = 引擎未能及时接收工程；未写入任何文件
+the bounce has not finished = 导出尚未完成
+cannot bounce: there is no audio output = 无法导出：没有音频输出

@@ -886,3 +886,6 @@ Loop Browser = ループブラウザ
 File Browser = ファイルブラウザ
 Record Enable: arm the track for recording = 録音可能: トラックを録音用に準備
 Input Monitoring: hear the input of the track = 入力モニタリング: トラックの入力を聴く
+the engine did not take the project in time; no file was written = エンジンがプロジェクトを時間内に受け取れなかったため、ファイルは書き出されませんでした
+the bounce has not finished = バウンスはまだ終わっていません
+cannot bounce: there is no audio output = バウンスできません: オーディオ出力がありません

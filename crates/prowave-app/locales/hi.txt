@@ -886,3 +886,6 @@ Loop Browser = लूप ब्राउज़र
 File Browser = फ़ाइल ब्राउज़र
 Record Enable: arm the track for recording = रिकॉर्ड इनेबल: ट्रैक को रिकॉर्डिंग के लिए तैयार करें
 Input Monitoring: hear the input of the track = इनपुट मॉनिटरिंग: ट्रैक का इनपुट सुनें
+the engine did not take the project in time; no file was written = इंजन ने प्रोजेक्ट समय पर स्वीकार नहीं किया; कोई फ़ाइल नहीं लिखी गई
+the bounce has not finished = बाउंस अभी पूरा नहीं हुआ है
+cannot bounce: there is no audio output = बाउंस नहीं हो सकता: कोई ऑडियो आउटपुट नहीं है

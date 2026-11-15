@@ -886,3 +886,6 @@ Loop Browser = Оглядач лупів
 File Browser = Оглядач файлів
 Record Enable: arm the track for recording = Готовність до запису: підготувати доріжку до запису
 Input Monitoring: hear the input of the track = Моніторинг входу: чути вхід доріжки
+the engine did not take the project in time; no file was written = рушій не прийняв проєкт вчасно; файл не записано
+the bounce has not finished = Боунс ще не завершено
+cannot bounce: there is no audio output = неможливо зробити боунс: немає аудіовиходу

@@ -886,3 +886,6 @@ Loop Browser = Loopbläddrare
 File Browser = Filbläddrare
 Record Enable: arm the track for recording = Inspelningsklar: gör spåret redo för inspelning
 Input Monitoring: hear the input of the track = Ingångsövervakning: hör spårets ingång
+the engine did not take the project in time; no file was written = motorn tog inte emot projektet i tid; ingen fil skrevs
+the bounce has not finished = bounce är inte klar
+cannot bounce: there is no audio output = kan inte bounca: ingen ljudutgång

@@ -886,3 +886,6 @@ Loop Browser = Kilpų naršyklė
 File Browser = Failų naršyklė
 Record Enable: arm the track for recording = Įrašymo parengtis: paruošti takelį įrašymui
 Input Monitoring: hear the input of the track = Įėjimo stebėjimas: girdėti takelio įėjimą
+the engine did not take the project in time; no file was written = variklis per nustatytą laiką neperėmė projekto; failas neįrašytas
+the bounce has not finished = bounce dar nesibaigė
+cannot bounce: there is no audio output = negalima atlikti bounce: nėra garso išvesties

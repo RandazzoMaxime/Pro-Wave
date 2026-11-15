@@ -886,3 +886,6 @@ Loop Browser = Przeglądarka pętli
 File Browser = Przeglądarka plików
 Record Enable: arm the track for recording = Gotowość do nagrywania: przygotuj ścieżkę do nagrania
 Input Monitoring: hear the input of the track = Monitorowanie wejścia: słuchaj wejścia ścieżki
+the engine did not take the project in time; no file was written = silnik nie przyjął projektu na czas; nie zapisano żadnego pliku
+the bounce has not finished = bounce nie został zakończony
+cannot bounce: there is no audio output = nie można zrobić bounce: brak wyjścia audio
