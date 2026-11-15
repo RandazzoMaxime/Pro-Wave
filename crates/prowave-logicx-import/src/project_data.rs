@@ -408,7 +408,7 @@ fn attach_regions(
         let length = sequence_length(data, sequence);
         if let Some(track) = tracks.iter_mut().find(|track| track.name == name) {
             track.midi_regions.push(MidiRegion {
-                name,
+                name: Some(name),
                 start_tick: start,
                 length_ticks: length,
                 notes,

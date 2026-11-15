@@ -64,7 +64,7 @@ fn inst_1_has_the_three_notes_the_user_played() {
         .midi_regions
         .first()
         .expect("a MIDI region on Inst 1");
-    assert_eq!(region.name, "Inst 1");
+    assert_eq!(region.name.as_deref(), Some("Inst 1"));
     assert_eq!(region.notes.len(), EXPECTED_NOTES.len(), "three notes");
     for (note, (pitch, velocity, start, length)) in region.notes.iter().zip(EXPECTED_NOTES) {
         assert_eq!(note.pitch, pitch, "pitch");

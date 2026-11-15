@@ -83,8 +83,9 @@ pub struct MidiNote {
 /// notes from the note records that follow its sequence record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MidiRegion {
-    /// The region name: the name of its sequence record, which is the track's name.
-    pub name: String,
+    /// The region name: the name of its sequence record, which is the track's name. `None`
+    /// when the region has no name.
+    pub name: Option<String>,
     /// The start in ticks from the project start (0 is bar 1). Read from the placement event of
     /// the track (position minus 34560). `None` when no placement event is found.
     pub start_tick: Option<u64>,
