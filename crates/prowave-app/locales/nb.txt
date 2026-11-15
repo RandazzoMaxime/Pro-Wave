@@ -895,3 +895,6 @@ Sample Rate = Samplingfrekvens
 Stop the recording or the bounce before changing the audio output. = Stopp innspillingen eller bouncingen før du endrer lydutgangen.
 Cannot use that audio output: {}. The current output keeps playing. = Kan ikke bruke den lydutgangen: {}. Den gjeldende utgangen spiller fortsatt.
 The saved output device is not available; using the system default = Den lagrede utgangsenheten er ikke tilgjengelig; systemstandarden brukes
+the engine did not take the project in time; no file was written = motoren tok ikke imot prosjektet i tide; ingen fil ble skrevet
+the bounce has not finished = bounce er ikke ferdig
+cannot bounce: there is no audio output = kan ikke bounce: ingen lydutgang

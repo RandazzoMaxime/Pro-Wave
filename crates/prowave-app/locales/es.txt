@@ -895,3 +895,6 @@ Sample Rate = Frecuencia de muestreo
 Stop the recording or the bounce before changing the audio output. = Detén la grabación o el bounce antes de cambiar la salida de audio.
 Cannot use that audio output: {}. The current output keeps playing. = No se puede usar esa salida de audio: {}. La salida actual sigue sonando.
 The saved output device is not available; using the system default = El dispositivo de salida guardado no está disponible; se usa el predeterminado del sistema
+the engine did not take the project in time; no file was written = el motor no aceptó el proyecto a tiempo; no se escribió ningún archivo
+the bounce has not finished = el bounce aún no ha terminado
+cannot bounce: there is no audio output = no se puede hacer el bounce: no hay salida de audio

@@ -895,3 +895,6 @@ Sample Rate = Частота дискретизації
 Stop the recording or the bounce before changing the audio output. = Зупиніть запис або бувід перед зміною аудіовиходу.
 Cannot use that audio output: {}. The current output keeps playing. = Не вдається використати цей аудіовихід: {}. Поточний вихід продовжує відтворення.
 The saved output device is not available; using the system default = Збережений пристрій виведення недоступний; використовується системний типовий
+the engine did not take the project in time; no file was written = рушій не прийняв проєкт вчасно; файл не записано
+the bounce has not finished = Боунс ще не завершено
+cannot bounce: there is no audio output = неможливо зробити боунс: немає аудіовиходу

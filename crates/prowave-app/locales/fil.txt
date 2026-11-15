@@ -895,3 +895,6 @@ Sample Rate = Sample Rate
 Stop the recording or the bounce before changing the audio output. = Itigil ang recording o ang bounce bago baguhin ang audio output.
 Cannot use that audio output: {}. The current output keeps playing. = Hindi magamit ang audio output na iyon: {}. Patuloy na tumutugtog ang kasalukuyang output.
 The saved output device is not available; using the system default = Hindi available ang na-save na output device; ginagamit ang default ng system
+the engine did not take the project in time; no file was written = hindi tinanggap ng engine ang proyekto sa tamang oras; walang file na naisulat
+the bounce has not finished = hindi pa tapos ang bounce
+cannot bounce: there is no audio output = hindi maaaring mag-bounce: walang audio output

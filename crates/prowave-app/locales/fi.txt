@@ -895,3 +895,6 @@ Sample Rate = Näytteenottotaajuus
 Stop the recording or the bounce before changing the audio output. = Lopeta tallennus tai bounce ennen kuin vaihdat äänilähdön.
 Cannot use that audio output: {}. The current output keeps playing. = Tätä äänilähtöä ei voi käyttää: {}. Nykyinen lähtö jatkaa toistoa.
 The saved output device is not available; using the system default = Tallennettua ulostulolaitetta ei ole käytettävissä; käytetään järjestelmän oletusta
+the engine did not take the project in time; no file was written = äänimoottori ei ottanut projektia vastaan ajoissa; tiedostoa ei kirjoitettu
+the bounce has not finished = bounce ei ole vielä valmis
+cannot bounce: there is no audio output = bounce ei onnistu: ei äänilähtöä

@@ -895,3 +895,6 @@ Sample Rate = Abtastrate
 Stop the recording or the bounce before changing the audio output. = Beende die Aufnahme oder den Bounce, bevor du die Audioausgabe änderst.
 Cannot use that audio output: {}. The current output keeps playing. = Diese Audioausgabe kann nicht verwendet werden: {}. Die bisherige Ausgabe spielt weiter.
 The saved output device is not available; using the system default = Das gespeicherte Ausgabegerät ist nicht verfügbar; es wird die Systemstandardausgabe verwendet
+the engine did not take the project in time; no file was written = die Engine hat das Projekt nicht rechtzeitig übernommen; es wurde keine Datei geschrieben
+the bounce has not finished = der Bounce ist noch nicht fertig
+cannot bounce: there is no audio output = Bounce nicht möglich: keine Audioausgabe

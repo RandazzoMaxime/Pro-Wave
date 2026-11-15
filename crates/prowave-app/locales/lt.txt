@@ -895,3 +895,6 @@ Sample Rate = Mėginių dažnis
 Stop the recording or the bounce before changing the audio output. = Prieš keisdami garso išvestį sustabdykite įrašymą ar bounce.
 Cannot use that audio output: {}. The current output keeps playing. = Negalima naudoti tos garso išvesties: {}. Dabartinė išvestis toliau groja.
 The saved output device is not available; using the system default = Išsaugotas išvesties įrenginys nepasiekiamas; naudojamas sistemos numatytasis
+the engine did not take the project in time; no file was written = variklis per nustatytą laiką neperėmė projekto; failas neįrašytas
+the bounce has not finished = bounce dar nesibaigė
+cannot bounce: there is no audio output = negalima atlikti bounce: nėra garso išvesties

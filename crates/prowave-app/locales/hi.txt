@@ -895,3 +895,6 @@ Sample Rate = सैंपल दर
 Stop the recording or the bounce before changing the audio output. = ऑडियो आउटपुट बदलने से पहले रिकॉर्डिंग या बाउंस रोकें।
 Cannot use that audio output: {}. The current output keeps playing. = वह ऑडियो आउटपुट इस्तेमाल नहीं हो सकता: {}. मौजूदा आउटपुट चलता रहेगा।
 The saved output device is not available; using the system default = सहेजा गया आउटपुट डिवाइस उपलब्ध नहीं है; सिस्टम का डिफ़ॉल्ट उपयोग हो रहा है
+the engine did not take the project in time; no file was written = इंजन ने प्रोजेक्ट समय पर स्वीकार नहीं किया; कोई फ़ाइल नहीं लिखी गई
+the bounce has not finished = बाउंस अभी पूरा नहीं हुआ है
+cannot bounce: there is no audio output = बाउंस नहीं हो सकता: कोई ऑडियो आउटपुट नहीं है

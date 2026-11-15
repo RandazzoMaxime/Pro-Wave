@@ -895,3 +895,6 @@ Sample Rate = Sample Rate
 Stop the recording or the bounce before changing the audio output. = Hentikan perekaman atau bounce sebelum mengubah output audio.
 Cannot use that audio output: {}. The current output keeps playing. = Output audio itu tidak dapat digunakan: {}. Output saat ini tetap berjalan.
 The saved output device is not available; using the system default = Perangkat output yang disimpan tidak tersedia; menggunakan bawaan sistem
+the engine did not take the project in time; no file was written = engine tidak menerima proyek tepat waktu; tidak ada berkas yang ditulis
+the bounce has not finished = bounce belum selesai
+cannot bounce: there is no audio output = tidak dapat bounce: tidak ada output audio

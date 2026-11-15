@@ -895,3 +895,6 @@ Sample Rate = 采样率
 Stop the recording or the bounce before changing the audio output. = 更改音频输出前，请先停止录音或合并导出。
 Cannot use that audio output: {}. The current output keeps playing. = 无法使用该音频输出：{}。当前输出继续播放。
 The saved output device is not available; using the system default = 已保存的输出设备不可用；正在使用系统默认设备
+the engine did not take the project in time; no file was written = 引擎未能及时接收工程；未写入任何文件
+the bounce has not finished = 导出尚未完成
+cannot bounce: there is no audio output = 无法导出：没有音频输出

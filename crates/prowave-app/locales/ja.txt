@@ -895,3 +895,6 @@ Sample Rate = サンプルレート
 Stop the recording or the bounce before changing the audio output. = オーディオ出力を変更する前に、録音またはバウンスを停止してください。
 Cannot use that audio output: {}. The current output keeps playing. = そのオーディオ出力は使用できません：{}。現在の出力はそのまま再生されます。
 The saved output device is not available; using the system default = 保存された出力デバイスは使用できないため、システムのデフォルトを使用します
+the engine did not take the project in time; no file was written = エンジンがプロジェクトを時間内に受け取れなかったため、ファイルは書き出されませんでした
+the bounce has not finished = バウンスはまだ終わっていません
+cannot bounce: there is no audio output = バウンスできません: オーディオ出力がありません
