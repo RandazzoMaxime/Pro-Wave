@@ -103,6 +103,7 @@ Gain Reduction = Pengurangan Gain
 Input = Masukan
 Audio FX = Efek Audio
 Sends = Send
+Send = Send
 Output = Keluaran
 Group = Grup
 Group {} = Grup {}

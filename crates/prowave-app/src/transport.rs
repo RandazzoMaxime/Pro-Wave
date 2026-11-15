@@ -3,8 +3,10 @@
 //!
 //! Every icon is drawn with vector shapes here (no bitmap or font glyphs), so it renders the
 //! same on Windows, Linux and macOS.
+use crate::drag_feedback::{drag_feedback, volume_text};
 use crate::file_browser::Tab;
 use crate::i18n::{tr, trf};
+use crate::mixer::lin_to_db;
 use crate::{
     model::{Project, SigPart},
     Bottom, UiState,
@@ -744,6 +746,7 @@ pub(crate) fn master_volume(
     if let Some(pt) = resp.interact_pointer_pos() {
         p.master_vol = ((pt.x - travel.0) / (travel.1 - travel.0)).clamp(0.0, 1.0);
     }
+    drag_feedback(ui.ctx(), &resp, || volume_text(lin_to_db(p.master_vol)));
 
     // Pill with a soft inner edge.
     let r = rect.height() / 2.0;

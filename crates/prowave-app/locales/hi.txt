@@ -103,6 +103,7 @@ Gain Reduction = गेन में कमी
 Input = इनपुट
 Audio FX = ऑडियो इफ़ेक्ट
 Sends = सेंड
+Send = सेंड
 Output = आउटपुट
 Group = समूह
 Group {} = समूह {}

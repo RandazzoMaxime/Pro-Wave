@@ -103,6 +103,7 @@ Gain Reduction = Stiprinimo mažinimas
 Input = Įvestis
 Audio FX = Garso efektai
 Sends = Siuntimai
+Send = Siuntimas
 Output = Išvestis
 Group = Grupė
 Group {} = Grupė {}

@@ -103,6 +103,7 @@ Gain Reduction = Pagbawas ng Gain
 Input = Input
 Audio FX = Audio FX
 Sends = Mga Send
+Send = Send
 Output = Output
 Group = Grupo
 Group {} = Grupo {}

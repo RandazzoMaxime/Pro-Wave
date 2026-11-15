@@ -103,6 +103,7 @@ Gain Reduction = 增益衰减
 Input = 输入
 Audio FX = 音频效果
 Sends = 发送
+Send = 发送
 Output = 输出
 Group = 编组
 Group {} = 分组 {}

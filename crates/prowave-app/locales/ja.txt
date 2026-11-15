@@ -103,6 +103,7 @@ Gain Reduction = ゲインリダクション
 Input = 入力
 Audio FX = オーディオ FX
 Sends = センド
+Send = センド
 Output = 出力
 Group = グループ
 Group {} = グループ {}

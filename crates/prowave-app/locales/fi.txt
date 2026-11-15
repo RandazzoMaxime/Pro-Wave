@@ -103,6 +103,7 @@ Gain Reduction = Vahvistuksen vaimennus
 Input = Tulo
 Audio FX = Äänitehosteet
 Sends = Lähetykset
+Send = Lähetys
 Output = Lähtö
 Group = Ryhmä
 Group {} = Ryhmä {}

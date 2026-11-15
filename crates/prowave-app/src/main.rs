@@ -13,6 +13,7 @@ mod bench;
 mod bounce;
 mod clock_follow;
 mod clock_in;
+mod drag_feedback;
 mod engine_sync;
 mod event_list;
 mod file_browser;

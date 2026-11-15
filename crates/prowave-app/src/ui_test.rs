@@ -1,7 +1,7 @@
 //! A way to try the editors without a window: egui is fed pointer events frame by frame, as
 //! it would get them from the operating system, and the editors run in it. Nothing outside the
 //! process is touched.
-use egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Ui, Vec2};
+use egui::{Context, CursorIcon, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Ui, Vec2};
 
 pub struct Harness {
     pub ctx: Context,
@@ -18,8 +18,9 @@ impl Harness {
         }
     }
 
-    /// Runs one frame with `events`.
-    pub fn frame(&mut self, events: Vec<Event>, mut ui: impl FnMut(&mut Ui)) {
+    /// Runs one frame with `events` and returns the mouse cursor the frame asked for (egui
+    /// hands it on to the window, so this is what the user would see).
+    pub fn frame(&mut self, events: Vec<Event>, mut ui: impl FnMut(&mut Ui)) -> CursorIcon {
         self.time += 1.0 / 60.0;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
@@ -30,6 +31,7 @@ impl Harness {
         let mut out = self.ctx.run_ui(input, |u| ui(u));
         // Nothing paints these frames, so the texture changes are not needed.
         out.textures_delta.clear();
+        out.platform_output.cursor_icon
     }
 
     /// A frame without input (widgets register where they are).

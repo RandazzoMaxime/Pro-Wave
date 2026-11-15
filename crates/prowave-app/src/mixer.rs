@@ -11,6 +11,9 @@
 //! drawn but not functional yet.
 //!
 //! [`channel_strip`] is also used by the Inspector's two strips.
+use crate::drag_feedback::{
+    drag_feedback, pan_number, pan_text, send_db_text, send_text, volume_text,
+};
 use crate::i18n::{tr, trf};
 use crate::model::{AutoMode, AutoTarget, Insert, Project, SendSlot, TrackKind, MAX_SENDS};
 use crate::native_popup::Item;
@@ -344,7 +347,9 @@ struct Moved {
 }
 
 /// The pan knob at `c` showing `value` (-1..1); drag it, or double-click for the centre. Not
-/// moved when `editable` is false (the strip plays its automation, or has no pan).
+/// moved when `editable` is false (the strip plays its automation, or has no pan). While it is
+/// dragged its value is shown above it (see [`drag_feedback`]), and with `value_in_knob` also
+/// over its face, as Logic's Inspector does.
 fn pan_knob(
     ui: &Ui,
     g: &Painter,
@@ -352,14 +357,20 @@ fn pan_knob(
     id: egui::Id,
     value: f32,
     editable: bool,
+    value_in_knob: bool,
 ) -> Moved {
     let r = Rect::from_center_size(c, vec2(26.0, 26.0));
     let mut out = Moved::default();
+    // The value the knob is dragged to, when it is being dragged.
+    let mut dragging = None;
     if editable {
         let resp = ui.interact(r, id, Sense::click_and_drag());
         if resp.dragged() {
             out.value = Some((value - resp.drag_delta().y * 0.01).clamp(-1.0, 1.0));
         }
+        let now = out.value.unwrap_or(value);
+        drag_feedback(ui.ctx(), &resp, || pan_text(now));
+        dragging = resp.dragged().then_some(now);
         if resp.double_clicked() {
             out.value = Some(0.0);
             out.started = true;
@@ -369,6 +380,16 @@ fn pan_knob(
         out.stopped |= resp.drag_stopped();
     }
     crate::widgets::draw_knob(g, c, 12.0, value);
+    // Drawn after the knob, so the number is on top of its pointer.
+    if let (true, Some(now)) = (value_in_knob, dragging) {
+        g.text(
+            c,
+            Align2::CENTER_CENTER,
+            pan_number(now).to_string(),
+            FontId::proportional(8.5),
+            Color32::WHITE,
+        );
+    }
     out
 }
 
@@ -385,7 +406,8 @@ pub(crate) fn meter_colour(db: f32) -> Color32 {
 
 /// Fader (scale + slot + cap) and stereo meter with peak-hold lines, laid out like Logic's
 /// channel strip: fader scale on the left, the cap, the meter scale numbers, then L/R bars.
-/// Returns the new fader value in dB when it was dragged or double-clicked.
+/// Returns the new fader value in dB when it was dragged or double-clicked. While it is dragged
+/// `tip` gives the label shown above the cap (the volume, or the send level it sets).
 #[allow(clippy::too_many_arguments)]
 fn fader_and_meter(
     ui: &Ui,
@@ -396,6 +418,7 @@ fn fader_and_meter(
     editable: bool,
     peaks: (f32, f32),
     inactive: bool,
+    tip: fn(f32) -> String,
 ) -> Moved {
     let top = area.top() + 8.0;
     let bottom = area.bottom() - 6.0;
@@ -542,6 +565,8 @@ fn fader_and_meter(
             let f = db_to_frac(db) - resp.drag_delta().y / h;
             out.value = Some(frac_to_db(f).clamp(-60.0, 6.0));
         }
+        let now = out.value.unwrap_or(db);
+        drag_feedback(ui.ctx(), &resp, || tip(now));
         if resp.double_clicked() {
             out.value = Some(0.0);
             out.started = true;
@@ -988,6 +1013,7 @@ fn send_slot(
     if kresp.dragged() {
         send.level = (send.level - kresp.drag_delta().y * 0.01).clamp(0.0, 1.0);
     }
+    drag_feedback(ui.ctx(), &kresp, || send_text(send.level));
     if kresp.double_clicked() {
         send.level = 0.0;
     }
@@ -1726,7 +1752,9 @@ pub fn channel_strip(
             let t = &p.tracks[i];
             let shown = crate::automation::shown_value(t, AutoTarget::Pan, beat);
             let editable = crate::automation::editable(t, AutoTarget::Pan);
-            let m = pan_knob(ui, g, pan_c, id(ns, (key, "pan")), shown, editable);
+            // The Inspector's knob also prints its value over its face while it is dragged.
+            let in_knob = name_style == NameStyle::Plain;
+            let m = pan_knob(ui, g, pan_c, id(ns, (key, "pan")), shown, editable, in_knob);
             if let Some(value) = m.value {
                 let delta = value - shown;
                 crate::automation::moved(&mut p.tracks[i], AutoTarget::Pan, value);
@@ -1743,7 +1771,7 @@ pub fn channel_strip(
             }
         }
         _ => {
-            pan_knob(ui, g, pan_c, id(ns, (key, "pan")), 0.0, false);
+            pan_knob(ui, g, pan_c, id(ns, (key, "pan")), 0.0, false, false);
         }
     }
 
@@ -1818,6 +1846,12 @@ pub fn channel_strip(
         StripKey::StereoOut => true,
         StripKey::Master => false,
     };
+    // A fader that sets a send says so in its label.
+    let tip: fn(f32) -> String = if send_bus.is_some() {
+        send_db_text
+    } else {
+        volume_text
+    };
     let moved = fader_and_meter(
         ui,
         g,
@@ -1827,6 +1861,7 @@ pub fn channel_strip(
         fader_free,
         peaks,
         inactive,
+        tip,
     );
     if let Some(db) = moved.value {
         match key {
@@ -2720,6 +2755,69 @@ mod tests {
         assert_eq!(list[0].level, 0.0);
         set_send_level(&mut list, 4, -60.0);
         assert_eq!(list.len(), 1, "nothing to add for a silent send");
+    }
+
+    /// A press at `from`, a drag up to `to` and the release. Returns the mouse cursor of the
+    /// frame in which the drag is under way, and of the frame that lets go.
+    fn drag_cursors(
+        h: &mut crate::ui_test::Harness,
+        from: egui::Pos2,
+        to: egui::Pos2,
+        mut ui: impl FnMut(&mut egui::Ui),
+    ) -> (egui::CursorIcon, egui::CursorIcon) {
+        let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.frame(vec![egui::Event::PointerMoved(from)], &mut ui);
+        h.frame(vec![button(from, true)], &mut ui);
+        h.frame(
+            vec![egui::Event::PointerMoved(from + vec2(0.0, -6.0))],
+            &mut ui,
+        );
+        let dragging = h.frame(vec![egui::Event::PointerMoved(to)], &mut ui);
+        let released = h.frame(vec![button(to, false)], &mut ui);
+        (dragging, released)
+    }
+
+    #[test]
+    fn a_dragged_fader_or_pan_knob_hides_the_pointer_until_the_button_is_let_go() {
+        let mut h = crate::ui_test::Harness::new(400.0, 400.0);
+        // A fader area 300 points tall; its cap sits at 0 dB (the scale's fraction for it).
+        let area = Rect::from_min_size(pos2(10.0, 10.0), vec2(80.0, 300.0));
+        let (top, bottom) = (area.top() + 8.0, area.bottom() - 6.0);
+        let cap = pos2(
+            area.left() + 24.0,
+            bottom - db_to_frac(0.0) * (bottom - top),
+        );
+        let fader = egui::Id::unique("test fader");
+        let (dragging, released) = drag_cursors(&mut h, cap, cap - vec2(0.0, 30.0), |ui| {
+            let g = ui.painter();
+            fader_and_meter(
+                ui,
+                g,
+                area,
+                fader,
+                0.0,
+                true,
+                (0.0, 0.0),
+                false,
+                volume_text,
+            );
+        });
+        assert_eq!(dragging, egui::CursorIcon::None, "the pointer hides");
+        assert_eq!(released, egui::CursorIcon::Default, "and comes back");
+
+        let knob = pos2(200.0, 200.0);
+        let pan = egui::Id::unique("test pan");
+        let (dragging, released) = drag_cursors(&mut h, knob, knob - vec2(0.0, 30.0), |ui| {
+            let g = ui.painter();
+            pan_knob(ui, g, knob, pan, 0.0, true, true);
+        });
+        assert_eq!(dragging, egui::CursorIcon::None, "the pointer hides");
+        assert_eq!(released, egui::CursorIcon::Default, "and comes back");
     }
 
     #[test]

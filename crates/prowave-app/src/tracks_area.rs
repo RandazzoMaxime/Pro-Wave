@@ -5,6 +5,7 @@
 //! Regions, drag in the ruler to set the cycle, click to move the playhead, scroll, zoom
 //! (sliders and Ctrl+wheel), Catch playhead, add/duplicate tracks, M/S/R/I, volume, pan.
 //! Menu entries that are not implemented yet are shown disabled.
+use crate::drag_feedback::{drag_feedback, pan_text, volume_text};
 use crate::i18n::{tr, trf};
 use crate::model::HeaderPart;
 use crate::model::{Project, Region, Track, TrackKind, STACK_COLOR};
@@ -2499,6 +2500,7 @@ fn volume_slider(
     if resp.double_clicked() {
         t.volume_db = 0.0;
     }
+    drag_feedback(ui.ctx(), &resp, || volume_text(t.volume_db));
     g.rect_filled(sl, SLIDER_H / 2.0, Color32::from_rgb(55, 54, 54));
     // Level meter inside the pill, as in Logic: two thin bars (L over R) that follow the
     // slider's own scale, green, yellow from -6 dB and red above 0 dB.
@@ -2549,6 +2551,7 @@ fn pan_knob(ui: &Ui, g: &Painter, t: &mut Track, i: usize, hdr: Rect) {
     if kresp.dragged() {
         t.pan = (t.pan - kresp.drag_delta().y * 0.01).clamp(-1.0, 1.0);
     }
+    drag_feedback(ui.ctx(), &kresp, || pan_text(t.pan));
     if kresp.double_clicked() {
         t.pan = 0.0;
     }

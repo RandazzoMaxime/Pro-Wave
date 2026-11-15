@@ -14,6 +14,7 @@
 //! - MIDI: which MIDI input plays live notes.
 
 use crate::audio_prefs::AudioPrefs;
+use crate::drag_feedback::{drag_feedback, volume_text};
 use crate::i18n::{tr, trf};
 use crate::model::{
     Project, DEFAULT_CLICK_DB, MAX_COUNT_IN_BARS, MAX_TUNING_HZ, MIN_CLICK_DB, MIN_TUNING_HZ,
@@ -131,7 +132,9 @@ fn general(ui: &mut egui::Ui, p: &mut Project) {
 fn metronome(ui: &mut egui::Ui, p: &mut Project) {
     ui.horizontal(|ui| {
         ui.label(tr("Click Volume"));
-        ui.add(egui::Slider::new(&mut p.click_volume_db, MIN_CLICK_DB..=0.0).suffix(" dB"));
+        let click =
+            ui.add(egui::Slider::new(&mut p.click_volume_db, MIN_CLICK_DB..=0.0).suffix(" dB"));
+        drag_feedback(ui.ctx(), &click, || volume_text(p.click_volume_db));
         if ui.small_button(tr("Reset")).clicked() {
             p.click_volume_db = DEFAULT_CLICK_DB;
         }

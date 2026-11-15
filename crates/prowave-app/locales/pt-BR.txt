@@ -103,6 +103,7 @@ Gain Reduction = Redução de ganho
 Input = Entrada
 Audio FX = Efeitos de áudio
 Sends = Envios
+Send = Envio
 Output = Saída
 Group = Grupo
 Group {} = Grupo {}
