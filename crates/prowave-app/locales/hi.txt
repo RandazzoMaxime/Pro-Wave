@@ -861,4 +861,5 @@ The audio region {} names no file in the project, so it is skipped = ऑडि�
 The volumes were not read from the Logic Pro project, so the tracks stay at 0 dB = Logic Pro प्रोजेक्ट से वॉल्यूम नहीं पढ़े गए, इसलिए ट्रैक 0 dB पर रहते हैं
 Mute, solo and plug-in bypass were not read from the Logic Pro project, so they are all off = Logic Pro प्रोजेक्ट से म्यूट, सोलो और प्लग-इन बाईपास नहीं पढ़े गए, इसलिए ये सब बंद हैं
 The positions of the regions were not read from the Logic Pro project, so each one starts at bar 1 = Logic Pro प्रोजेक्ट से रीजनों की स्थिति नहीं पढ़ी गई, इसलिए हर एक बार 1 से शुरू होता है
-The track playing {} is not read from the Logic Pro project, so it is on a track of its own = जो ट्रैक {} चलाता है, वह Logic Pro प्रोजेक्ट से नहीं पढ़ा गया, इसलिए वह अपने ट्रैक पर है
+The audio region {} is not placed in the project, so it is skipped = ऑडियो रीजन {} प्रोजेक्ट में नहीं रखा गया है, इसलिए इसे छोड़ दिया गया है
+The audio file {} plays on no track that is imported, so it is on a track of its own = ऑडियो फ़ाइल {} किसी आयात किए गए ट्रैक पर नहीं चलती, इसलिए वह अपने ट्रैक पर है

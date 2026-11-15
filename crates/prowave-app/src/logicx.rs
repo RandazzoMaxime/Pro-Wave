@@ -158,7 +158,8 @@ fn track_kind(kind: logic::TrackKind) -> Option<TrackKind> {
 type Lookup<'a> = &'a dyn Fn(Format, &str) -> Option<PluginInfo>;
 
 /// The mapping itself: the tempo and signature, then every importable strip as a track with its
-/// plug-ins and regions, appended to `p`.
+/// plug-ins and regions, appended to `p`. An audio region goes on the track that owns it. An
+/// audio file that no imported track plays gets a track of its own, once per file.
 fn map_into(
     p: &mut Project,
     full: &logic::FullProject,
@@ -178,6 +179,15 @@ fn map_into(
     let tpq = full.ticks_per_quarter;
     let mut unread = Unread::default();
     let mut regions_made = false;
+    for record in full.audio_regions.iter().filter(|r| r.file.is_none()) {
+        report.notes.push(trf(
+            "The audio region {} names no file in the project, so it is skipped",
+            &[&record.name],
+        ));
+    }
+    // The audio regions that an imported track owns, and the files those tracks play.
+    let mut owned: Vec<&logic::AudioRegion> = Vec::new();
+    let mut played: Vec<String> = Vec::new();
     for strip in full.tracks.iter().filter(|t| importable(t)) {
         let Some(kind) = track_kind(strip.kind) else {
             continue;
@@ -216,32 +226,47 @@ fn map_into(
         if kind == TrackKind::Instrument {
             track.regions = midi_regions(p, strip, tpq, &mut unread);
         }
+        for record in &strip.audio_regions {
+            owned.push(record);
+            let Some(rel) = record.file.as_deref() else {
+                continue;
+            };
+            let Some(audio) = open_audio(rel, media, &mut report) else {
+                continue;
+            };
+            track
+                .regions
+                .push(audio_region_of(p, record, audio, tpq, ctx, &mut unread));
+            played.push(rel.to_string());
+        }
         regions_made |= !track.regions.is_empty();
         p.tracks.push(track);
         report.tracks += 1;
     }
-    // The audio regions are not tied to a strip yet, so each file gets a track of its own.
-    let mut first_of_file: Vec<&logic::AudioRegion> = Vec::new();
-    for record in &full.audio_regions {
+    // The audio regions whose owner is not an imported track: placed ones get a track per file,
+    // and an unplaced one is left out, because the project does not play it.
+    for record in full.audio_regions.iter().filter(|r| r.file.is_some()) {
+        if owned.contains(&record) {
+            continue;
+        }
         let Some(file) = record.file.as_deref() else {
+            continue;
+        };
+        if record.start_tick.is_none() {
             report.notes.push(trf(
-                "The audio region {} names no file in the project, so it is skipped",
+                "The audio region {} is not placed in the project, so it is skipped",
                 &[&record.name],
             ));
             continue;
-        };
-        if !first_of_file
-            .iter()
-            .any(|r| r.file.as_deref() == Some(file))
-        {
-            first_of_file.push(record);
         }
-    }
-    for record in first_of_file {
+        if played.iter().any(|f| f == file) {
+            continue;
+        }
         if p.tracks.len() >= prowave_engine::MAX_TRACKS {
             break;
         }
-        if let Some(track) = audio_track(p, record, tpq, media, ctx, &mut report, &mut unread) {
+        if let Some(track) = audio_track(p, record, file, tpq, media, ctx, &mut report) {
+            played.push(file.to_string());
             regions_made = true;
             p.tracks.push(track);
             report.tracks += 1;
@@ -402,13 +427,14 @@ fn manufacturer(slot: &logic::PluginSlot) -> String {
 }
 
 /// The MIDI regions of a strip as Pro Wave regions. A note's start is in ticks from the start of
-/// its region, as the reader gives it, so it lands where the piano roll showed it.
+/// its region, as the reader gives it, so it lands where the piano roll showed it. A region the
+/// reader did not place starts at bar 1 and covers its notes, whole bars.
 fn midi_regions(p: &Project, strip: &logic::Track, tpq: u32, unread: &mut Unread) -> Vec<Region> {
     strip
         .midi_regions
         .iter()
         .map(|region| {
-            if region.start_tick.is_none() || region.length_ticks.is_none() {
+            if region.start_tick.is_none() {
                 unread.positions = true;
             }
             let mut notes: Vec<Note> = region
@@ -423,25 +449,23 @@ fn midi_regions(p: &Project, strip: &logic::Track, tpq: u32, unread: &mut Unread
                 })
                 .collect();
             notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.pitch.cmp(&b.pitch)));
-            // Without a located position the region covers its notes, rounded up to whole bars.
             let notes_end = region
                 .notes
                 .iter()
                 .map(|n| beats_of(n.start_tick + n.length_ticks, tpq))
                 .fold(0.0, f64::max);
             let bars = p.beats_to_bar(notes_end).ceil().max(1.0);
-            let (start_bar, len_bars) = region_span(
-                p,
-                tpq,
-                region.start_tick.zip(region.length_ticks),
-                p.bar_to_beats(bars),
-            );
+            let start = region.start_tick.map_or(0.0, |t| beats_of(t, tpq));
+            let length = region
+                .length_ticks
+                .map_or(p.bar_to_beats(bars), |t| beats_of(t, tpq));
+            let (start_bar, len_bars) = region_bars(p, start, length);
             Region {
-                name: if region.name.is_empty() {
-                    strip.name.clone()
-                } else {
-                    region.name.clone()
-                },
+                name: region
+                    .name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| strip.name.clone()),
                 start_bar,
                 len_bars,
                 notes,
@@ -455,25 +479,9 @@ fn midi_regions(p: &Project, strip: &logic::Track, tpq: u32, unread: &mut Unread
         .collect()
 }
 
-/// The track that plays the audio file of `record`, named after the file, with one region that
-/// plays the file from its start. The reader does not say which track an audio region belongs
-/// to, nor where it starts, so the region goes to the start of the project with the file's own
-/// length. A file that is not in the bundle's `Media` folder is skipped, with a note.
-fn audio_track(
-    p: &Project,
-    record: &logic::AudioRegion,
-    tpq: u32,
-    media: Option<&Path>,
-    ctx: &egui::Context,
-    report: &mut Report,
-    unread: &mut Unread,
-) -> Option<Track> {
-    let rel = record.file.as_deref()?;
-    let name = Path::new(rel)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(rel)
-        .to_string();
+/// Opens the audio file `rel` (relative to the bundle's `Media` folder). A file that is missing,
+/// outside `Media` or unreadable is left out, with a note.
+fn open_audio(rel: &str, media: Option<&Path>, report: &mut Report) -> Option<AudioFile> {
     let Some(file) = media.and_then(|dir| safe_media_file(dir, rel)) else {
         report.notes.push(trf(
             "The audio file {} is not in Media, so it is skipped",
@@ -481,26 +489,43 @@ fn audio_track(
         ));
         return None;
     };
-    let audio = match AudioFile::open(&file) {
-        Ok(audio) => audio,
+    match AudioFile::open(&file) {
+        Ok(audio) => Some(audio),
         Err(e) => {
             report.notes.push(trf("cannot read {}: {}", &[&rel, &e]));
-            return None;
+            None
         }
-    };
-    if record.start_tick.is_none() || record.length_ticks.is_none() {
+    }
+}
+
+/// The audio region of `record` on the track that owns it. Its start is the reader's start, or
+/// bar 1 when the reader did not place it. Its length is the reader's length in ticks, or the
+/// length in frames of the record at the file's sample rate, or the whole file.
+fn audio_region_of(
+    p: &Project,
+    record: &logic::AudioRegion,
+    audio: AudioFile,
+    tpq: u32,
+    ctx: &egui::Context,
+    unread: &mut Unread,
+) -> Region {
+    if record.start_tick.is_none() {
         unread.positions = true;
     }
-    let natural = p.tempo_map().advance(0.0, audio.duration_secs());
-    let (start_bar, len_bars) =
-        region_span(p, tpq, record.start_tick.zip(record.length_ticks), natural);
-    report.notes.push(trf(
-        "The track playing {} is not read from the Logic Pro project, so it is on a track of its own",
-        &[&rel],
-    ));
-    let mut track = Track::new(name.clone(), TrackKind::Audio);
-    track.regions = vec![Region {
-        name,
+    let start = record.start_tick.map_or(0.0, |t| beats_of(t, tpq));
+    let length = match record.length_ticks {
+        Some(ticks) => beats_of(ticks, tpq),
+        None => {
+            let seconds = record.length_frames.map_or_else(
+                || audio.duration_secs(),
+                |frames| f64::from(frames) / f64::from(audio.sample_rate.max(1)),
+            );
+            p.tempo_map().advance(start, seconds) - start
+        }
+    };
+    let (start_bar, len_bars) = region_bars(p, start, length);
+    Region {
+        name: record.name.clone(),
         start_bar,
         len_bars,
         notes: Vec::new(),
@@ -509,8 +534,41 @@ fn audio_track(
         audio: Some(crate::import::audio_region(audio, ctx)),
         params: RegionParams::default(),
         generated: None,
-    }];
+    }
+}
+
+/// The track for an audio file that no imported track plays: a new audio track named after the
+/// file, with the region the reader placed. The report says why it is on a track of its own.
+fn audio_track(
+    p: &Project,
+    record: &logic::AudioRegion,
+    file: &str,
+    tpq: u32,
+    media: Option<&Path>,
+    ctx: &egui::Context,
+    report: &mut Report,
+) -> Option<Track> {
+    let audio = open_audio(file, media, report)?;
+    report.notes.push(trf(
+        "The audio file {} plays on no track that is imported, so it is on a track of its own",
+        &[&file],
+    ));
+    let name = file_stem(file);
+    let mut track = Track::new(name, TrackKind::Audio);
+    // Only a record the reader placed gets here (see `map_into`), so no position is unread.
+    let mut placed = Unread::default();
+    track.regions = vec![audio_region_of(p, record, audio, tpq, ctx, &mut placed)];
     Some(track)
+}
+
+/// The name of an audio file without its folder and extension (`Audio Files/Inst 1_bip.wav`
+/// is `Inst 1_bip`).
+fn file_stem(rel: &str) -> String {
+    Path::new(rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(rel)
+        .to_string()
 }
 
 /// The file `rel` names inside `dir`, when it is a plain relative path that stays inside `dir`
@@ -530,23 +588,12 @@ fn beats_of(ticks: u64, ticks_per_quarter: u32) -> f64 {
     ticks as f64 / f64::from(ticks_per_quarter)
 }
 
-/// The bar (from 1) and length in bars of a region. `located` is its start and length in ticks
-/// when the reader found them; otherwise the region starts at bar 1 and is `natural_beats` long,
-/// its length being the one the audio file or its notes give.
-fn region_span(
-    p: &Project,
-    tpq: u32,
-    located: Option<(u64, u64)>,
-    natural_beats: f64,
-) -> (f32, f32) {
-    match located {
-        Some((start, length)) => {
-            let first = p.beats_to_bar(beats_of(start, tpq));
-            let last = p.beats_to_bar(beats_of(start, tpq) + beats_of(length, tpq));
-            ((first + 1.0) as f32, (last - first).max(MIN_BARS) as f32)
-        }
-        None => (1.0, p.beats_to_bar(natural_beats).max(MIN_BARS) as f32),
-    }
+/// The bar (from 1) and length in bars of a region that starts `start` quarter notes into the
+/// project and lasts `length` quarter notes. A region is at least one sixteenth of a bar long.
+fn region_bars(p: &Project, start: f64, length: f64) -> (f32, f32) {
+    let first = p.beats_to_bar(start);
+    let last = p.beats_to_bar(start + length);
+    ((first + 1.0) as f32, (last - first).max(MIN_BARS) as f32)
 }
 
 /// Shows the Logic Pro Import window with `report` until it is closed.
@@ -626,6 +673,7 @@ mod tests {
             solo: None,
             plugins: Vec::new(),
             midi_regions: Vec::new(),
+            audio_regions: Vec::new(),
             instrument_files: Vec::new(),
         }
     }
@@ -665,13 +713,13 @@ mod tests {
     }
 
     fn midi_region(
-        name: &str,
+        name: Option<&str>,
         start_tick: Option<u64>,
         length_ticks: Option<u64>,
         notes: Vec<MidiNote>,
     ) -> MidiRegion {
         MidiRegion {
-            name: name.into(),
+            name: name.map(str::to_string),
             start_tick,
             length_ticks,
             notes,
@@ -687,11 +735,19 @@ mod tests {
         }
     }
 
-    fn audio_record(name: &str, file: Option<&str>) -> AudioRegion {
+    /// An audio record: `start` is its tick when the reader placed it, `frames` its length in
+    /// frames when the reader read it.
+    fn audio_record(
+        name: &str,
+        file: Option<&str>,
+        start: Option<u64>,
+        frames: Option<u32>,
+    ) -> AudioRegion {
         AudioRegion {
             name: name.into(),
             file: file.map(str::to_string),
-            start_tick: None,
+            start_tick: start,
+            length_frames: frames,
             length_ticks: None,
         }
     }
@@ -712,6 +768,7 @@ mod tests {
             tracks,
             unassigned_plugins: Vec::new(),
             audio_regions: Vec::new(),
+            audio_files: Vec::new(),
             ticks_per_quarter: TPQ,
         }
     }
@@ -990,7 +1047,7 @@ mod tests {
         let mut inst = strip("Inst 1", L::Instrument);
         // The region starts at beat 4 (the start of bar 2 in 4/4) and lasts one bar.
         inst.midi_regions.push(midi_region(
-            "Lead",
+            Some("Lead"),
             Some(4 * u64::from(TPQ)),
             Some(4 * u64::from(TPQ)),
             vec![note(64, 90, 480, 240), note(60, 100, 0, 0)],
@@ -1020,7 +1077,7 @@ mod tests {
         let mut inst = strip("Inst 1", L::Instrument);
         // The notes end 12 beats after the region start, which is three bars.
         inst.midi_regions.push(midi_region(
-            "Inst 1",
+            None,
             None,
             None,
             vec![
@@ -1046,12 +1103,12 @@ mod tests {
     }
 
     #[test]
-    fn a_located_region_is_placed_where_the_reader_says() {
+    fn a_region_is_placed_where_the_reader_says_or_at_bar_one() {
         let p = empty();
-        let t = u64::from(TPQ);
-        assert_eq!(region_span(&p, TPQ, Some((4 * t, 4 * t)), 0.0), (2.0, 1.0));
-        assert_eq!(region_span(&p, TPQ, None, 4.0), (1.0, 1.0));
-        assert_eq!(region_span(&p, TPQ, None, 0.0), (1.0, MIN_BARS as f32));
+        // Four quarter notes in is bar 2 of 4/4, and a bar lasts four quarter notes.
+        assert_eq!(region_bars(&p, 4.0, 4.0), (2.0, 1.0));
+        assert_eq!(region_bars(&p, 0.0, 4.0), (1.0, 1.0));
+        assert_eq!(region_bars(&p, 0.0, 0.0), (1.0, MIN_BARS as f32));
     }
 
     #[test]
@@ -1092,21 +1149,74 @@ mod tests {
     }
 
     #[test]
-    fn audio_files_come_in_on_tracks_of_their_own_from_the_media_folder_only() {
+    fn audio_regions_go_on_their_owner_track_and_unowned_files_on_one_track_each() {
         let dir = tempfile::tempdir().unwrap();
         let media = dir.path().join("Media");
         std::fs::create_dir_all(media.join("Audio Files")).unwrap();
         crate::project_io::tests::write_wav(&media.join("Audio Files").join("Take 1.wav"));
+        crate::project_io::tests::write_wav(&media.join("Audio Files").join("Take 2.wav"));
         std::fs::write(dir.path().join("secret.wav"), b"not audio").unwrap();
+        let t = u64::from(TPQ);
+        // The wav holds 22 050 frames at 44 100 Hz: half a second, one beat at 120 BPM.
+        let frames = Some(22_050);
 
-        let mut full = project(vec![strip("Inst 1", L::Instrument)]);
+        let mut audio_3 = strip("Audio 3", L::Audio);
+        audio_3.audio_regions = vec![
+            // Placed on bar 2 (four beats in), on its own track.
+            audio_record(
+                "Take 1_bip",
+                Some("Audio Files/Take 1.wav"),
+                Some(4 * t),
+                frames,
+            ),
+            audio_record(
+                "Missing_bip",
+                Some("Audio Files/Missing.wav"),
+                Some(0),
+                frames,
+            ),
+            audio_record("Escape_bip", Some("../secret.wav"), Some(0), frames),
+        ];
+        let mut audio_4 = strip("Audio 4", L::Audio);
+        // Not placed by the reader: it goes to the start of the project.
+        audio_4.audio_regions = vec![audio_record(
+            "Take 1_bip.2",
+            Some("Audio Files/Take 1.wav"),
+            None,
+            frames,
+        )];
+        let mut full = project(vec![strip("Inst 1", L::Instrument), audio_3, audio_4]);
         full.audio_regions = vec![
-            audio_record("Take 1_bip", Some("Audio Files/Take 1.wav")),
-            // A second region on the same file does not make a second track.
-            audio_record("Take 1_bip.1", Some("Audio Files/Take 1.wav")),
-            audio_record("Missing_bip", Some("Audio Files/Missing.wav")),
-            audio_record("Escape_bip", Some("../secret.wav")),
-            audio_record("Nameless_bip", None),
+            audio_record(
+                "Take 1_bip",
+                Some("Audio Files/Take 1.wav"),
+                Some(4 * t),
+                frames,
+            ),
+            audio_record("Take 1_bip.2", Some("Audio Files/Take 1.wav"), None, frames),
+            audio_record(
+                "Missing_bip",
+                Some("Audio Files/Missing.wav"),
+                Some(0),
+                frames,
+            ),
+            audio_record("Escape_bip", Some("../secret.wav"), Some(0), frames),
+            audio_record("Nameless_bip", None, Some(0), frames),
+            // A file that no imported track plays gets a track of its own, once.
+            audio_record(
+                "Take 2_bip",
+                Some("Audio Files/Take 2.wav"),
+                Some(0),
+                frames,
+            ),
+            audio_record(
+                "Take 2_bip.1",
+                Some("Audio Files/Take 2.wav"),
+                Some(t),
+                frames,
+            ),
+            // Not placed and not on a track: left out.
+            audio_record("Take 2_bip.2", Some("Audio Files/Take 2.wav"), None, frames),
         ];
         let mut p = empty();
         let report = map_into(
@@ -1116,46 +1226,43 @@ mod tests {
             &egui::Context::default(),
             &nothing,
         );
-        let audio: Vec<&Track> = p
+        let placed: Vec<(&str, &str, f32)> = p
             .tracks
             .iter()
-            .filter(|t| t.kind == TrackKind::Audio)
+            .flat_map(|track| {
+                track
+                    .regions
+                    .iter()
+                    .map(move |r| (track.name.as_str(), r.name.as_str(), r.start_bar))
+            })
             .collect();
-        assert_eq!(audio.len(), 1, "{:?}", report.notes);
-        assert_eq!(audio[0].name, "Take 1");
-        assert_eq!(audio[0].regions.len(), 1);
-        let region = &audio[0].regions[0];
-        assert_eq!(region.name, "Take 1");
-        assert!(region.audio.is_some());
-        assert_eq!(region.start_bar, 1.0, "the position is not read");
-        // 22 050 samples at 44 100 Hz is half a second: one beat at 120 BPM, a quarter of a bar.
-        assert!((region.len_bars - 0.25).abs() < 1e-3, "{}", region.len_bars);
-        assert_eq!(report.tracks, 2);
         assert_eq!(
-            report
-                .notes
-                .iter()
-                .filter(|n| n.contains("not in Media"))
-                .count(),
-            2,
+            placed,
+            [
+                ("Audio 3", "Take 1_bip", 2.0),
+                ("Audio 4", "Take 1_bip.2", 1.0),
+                ("Take 2", "Take 2_bip", 1.0),
+            ],
             "{:?}",
             report.notes
         );
-        assert_eq!(
-            report
-                .notes
-                .iter()
-                .filter(|n| n.contains("names no file"))
-                .count(),
-            1
+        assert_eq!(report.tracks, 4);
+        let audio_3_region = &p.tracks[1].regions[0];
+        assert!(
+            (audio_3_region.len_bars - 0.25).abs() < 1e-3,
+            "{}",
+            audio_3_region.len_bars
         );
+        let count = |word: &str| report.notes.iter().filter(|n| n.contains(word)).count();
+        assert_eq!(count("not in Media"), 2, "{:?}", report.notes);
+        assert_eq!(count("names no file"), 1, "{:?}", report.notes);
+        assert_eq!(count("is not placed"), 1, "{:?}", report.notes);
+        assert_eq!(count("plays on no track"), 1, "{:?}", report.notes);
         assert_eq!(
-            report
-                .notes
-                .iter()
-                .filter(|n| n.contains("positions"))
-                .count(),
-            1
+            count("positions"),
+            1,
+            "only the unplaced Audio 4 region: {:?}",
+            report.notes
         );
     }
 
@@ -1182,41 +1289,36 @@ mod tests {
         assert!(is_bundle(Path::new("/Music/Song.LOGICX")));
     }
 
-    /// The real project the format was checked against: Inst 1 with its three notes, its Audio
-    /// Unit Pro-Q 4 with the settings the project saved, and the audio file on a track of its
-    /// own. The notes are checked in beats: the reader's resolution is 960 ticks per quarter
-    /// note, so the note starts are 0.25, 0.5 and 1.0 beat after the region start, and the
-    /// lengths 0.25, 0.25 and 2.0 beats. Run it with
-    /// `cargo test -p prowave-app logicx -- --include-ignored`.
     #[test]
     #[ignore = "needs the project at /Users/maximerandazzo/Downloads/Projet.logicx"]
-    fn the_real_project_keeps_its_notes_plug_in_and_settings() {
+    fn the_real_project_keeps_its_notes_audio_plug_in_and_settings() {
         let path = Path::new("/Users/maximerandazzo/Downloads/Projet.logicx");
         let ctx = egui::Context::default();
         let (p, report) = new_project(path, &ctx).unwrap_or_else(|e| panic!("{e}"));
-        // Returns the plug-in settings of Inst 1 after checking its notes.
+        // Checks the imported tracks and returns the plug-in settings of Inst 1.
         let check = |p: &Project| -> Vec<u8> {
-            let track = p
+            let inst = p
                 .tracks
                 .iter()
                 .find(|t| t.name == "Inst 1")
                 .unwrap_or_else(|| panic!("Inst 1 is imported: {report:?}"));
-            let notes: Vec<(u8, u8, f32, f32)> = track
-                .regions
+            assert_eq!(inst.regions.len(), 1, "one MIDI region");
+            assert_eq!(inst.regions[0].start_bar, 1.0, "the region starts at bar 1");
+            let notes: Vec<(u8, u8, f32, f32)> = inst.regions[0]
+                .notes
                 .iter()
-                .flat_map(|r| r.notes.iter())
                 .map(|n| (n.pitch, n.vel, n.start, n.len))
                 .collect();
             assert_eq!(
                 notes,
                 [
-                    (59, 64, 0.25, 0.25),
-                    (62, 64, 0.5, 0.25),
-                    (64, 64, 1.0, 2.0),
+                    (59, 80, 0.25, 0.25),
+                    (62, 80, 0.5, 0.25),
+                    (64, 63, 1.0, 2.0),
                 ],
                 "(pitch, velocity, start and length in beats)"
             );
-            let hosted = track
+            let hosted = inst
                 .inserts
                 .iter()
                 .find(|i| i.plugin != 0)
@@ -1224,6 +1326,17 @@ mod tests {
             assert_eq!(plugins::name(hosted.plugin), "Pro-Q 4");
             let state = plugins::state(hosted.plugin).unwrap_or_default();
             assert!(!state.is_empty(), "the saved settings");
+            let audio_3 = p
+                .tracks
+                .iter()
+                .find(|t| t.name == "Audio 3")
+                .unwrap_or_else(|| panic!("Audio 3 is imported: {report:?}"));
+            let placed: Vec<(&str, f32)> = audio_3
+                .regions
+                .iter()
+                .map(|r| (r.name.as_str(), r.start_bar))
+                .collect();
+            assert_eq!(placed, [("Inst 1_bip", 2.0)], "the bounce, one bar in");
             state
         };
         let state = check(&p);
@@ -1233,6 +1346,6 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
         let (again, _) =
             crate::project_io::open_project(&saved, &ctx).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(check(&again), state, "the settings after saving");
+        assert_eq!(check(&again), state, "the same after saving and reloading");
     }
 }

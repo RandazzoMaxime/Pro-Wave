@@ -861,4 +861,5 @@ The audio region {} names no file in the project, so it is skipped = オーデ�
 The volumes were not read from the Logic Pro project, so the tracks stay at 0 dB = Logic Pro プロジェクトからボリュームを読み取れなかったため、トラックは 0 dB のままです
 Mute, solo and plug-in bypass were not read from the Logic Pro project, so they are all off = ミュート、ソロ、プラグインのバイパスは Logic Pro プロジェクトから読み取れなかったため、すべてオフです
 The positions of the regions were not read from the Logic Pro project, so each one starts at bar 1 = リージョンの位置は Logic Pro プロジェクトから読み取れなかったため、それぞれ小節 1 から始まります
-The track playing {} is not read from the Logic Pro project, so it is on a track of its own = {} を再生するトラックは Logic Pro プロジェクトから読み取れなかったため、専用のトラックになります
+The audio region {} is not placed in the project, so it is skipped = オーディオリージョン {} はプロジェクトに配置されていないため、スキップします
+The audio file {} plays on no track that is imported, so it is on a track of its own = オーディオファイル {} は取り込んだトラックのどれでも再生されないため、専用のトラックになります

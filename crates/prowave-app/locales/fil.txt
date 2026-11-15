@@ -861,4 +861,5 @@ The audio region {} names no file in the project, so it is skipped = Walang file
 The volumes were not read from the Logic Pro project, so the tracks stay at 0 dB = Hindi nabasa ang mga volume mula sa proyekto ng Logic Pro, kaya nasa 0 dB ang mga track
 Mute, solo and plug-in bypass were not read from the Logic Pro project, so they are all off = Hindi nabasa ang mute, solo at bypass ng plug-in mula sa proyekto ng Logic Pro, kaya nakapatay ang lahat ng ito
 The positions of the regions were not read from the Logic Pro project, so each one starts at bar 1 = Hindi nabasa ang mga posisyon ng mga region mula sa proyekto ng Logic Pro, kaya nagsisimula ang bawat isa sa bar 1
-The track playing {} is not read from the Logic Pro project, so it is on a track of its own = Hindi nabasa mula sa proyekto ng Logic Pro ang track na tumutugtog ng {}, kaya nasa sarili itong track
+The audio region {} is not placed in the project, so it is skipped = Hindi nakalagay sa proyekto ang audio region na {}, kaya nilaktawan ito
+The audio file {} plays on no track that is imported, so it is on a track of its own = Walang inaangkat na track na tumutugtog ng audio file na {}, kaya nasa sarili itong track
