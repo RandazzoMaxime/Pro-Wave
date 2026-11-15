@@ -4,7 +4,7 @@
 //! Notes and audio regions are asserted. Volume, pan, mute, solo and the record and monitor
 //! flags are not decoded yet, so their tests are ignored until a decoder finds the bytes.
 //!
-//! The note times are in beats here: 240 file ticks make a beat (see `FullProject`).
+//! Note and region times are in beats here: `FullProject::ticks_per_quarter` (960) ticks make one.
 
 use prowave_logicx_import::{read_full, FullProject, TrackKind};
 use std::fs;
@@ -12,15 +12,16 @@ use std::path::Path;
 
 const REAL_PROJECT: &str = "/Users/maximerandazzo/Downloads/Projet.logicx";
 
-/// The user's notes in the region `Inst 1`: pitch, velocity, start and length in beats from
-/// the region start (bar 1 beat 1).
+/// The notes of the region `Inst 1`, as the file holds them: pitch, velocity, start and length in
+/// beats from the region start (bar 1 beat 1, tick 0). The user gave pitches (B2, D3, E3) and the
+/// rhythm; the velocities are the file's (byte +0x0b of each note), which the user did not state.
 const EXPECTED_NOTES: [(u8, u8, f64, f64); 3] = [
-    // B2 at beat 2 (one beat long).
-    (59, 64, 1.0, 1.0),
-    // D3 at beat 3 (one beat long).
-    (62, 64, 2.0, 1.0),
-    // E3 at bar 2 beat 1 (two bars long).
-    (64, 64, 4.0, 8.0),
+    // B2 a sixteenth (one quarter of a beat) after the start, a sixteenth long.
+    (59, 80, 0.25, 0.25),
+    // D3 half a beat after the start, a sixteenth long.
+    (62, 80, 0.5, 0.25),
+    // E3 one beat after the start, two beats long (a half note).
+    (64, 63, 1.0, 2.0),
 ];
 
 /// The project copied to a temporary folder: the metadata and `ProjectData` only.
@@ -63,7 +64,7 @@ fn inst_1_has_the_three_notes_the_user_played() {
         .midi_regions
         .first()
         .expect("a MIDI region on Inst 1");
-    assert_eq!(region.name, "Inst 1");
+    assert_eq!(region.name.as_deref(), Some("Inst 1"));
     assert_eq!(region.notes.len(), EXPECTED_NOTES.len(), "three notes");
     for (note, (pitch, velocity, start, length)) in region.notes.iter().zip(EXPECTED_NOTES) {
         assert_eq!(note.pitch, pitch, "pitch");
@@ -79,6 +80,58 @@ fn inst_1_has_the_three_notes_the_user_played() {
             "length of pitch {pitch}"
         );
     }
+}
+
+#[test]
+fn the_bounce_is_placed_on_audio_3_one_bar_after_the_start() {
+    let Some((_dir, bundle)) = copy_project() else {
+        return;
+    };
+    let project = read_full(&bundle).expect("read_full");
+    let audio_3 = project
+        .tracks
+        .iter()
+        .find(|t| t.name == "Audio 3")
+        .expect("Audio 3");
+    assert_eq!(audio_3.audio_regions.len(), 1, "one placed region");
+    let region = &audio_3.audio_regions[0];
+    assert_eq!(region.name, "Inst 1_bip");
+    // The placement is 3840 ticks (one bar) after the start, not the one beat of the estimate.
+    assert_eq!(region.start_tick, Some(3840));
+    assert_eq!(
+        region.length_frames,
+        Some(88_200),
+        "two seconds of the 99 807-frame file"
+    );
+    let placed_elsewhere = project
+        .tracks
+        .iter()
+        .any(|t| t.name != "Audio 3" && t.audio_regions.iter().any(|r| r.name == "Inst 1_bip"));
+    assert!(!placed_elsewhere);
+}
+
+#[test]
+fn the_bounce_file_matches_its_descriptor() {
+    let Some((_dir, bundle)) = copy_project() else {
+        return;
+    };
+    let project = read_full(&bundle).expect("read_full");
+    let file = project.audio_files.first().expect("the audio file");
+    assert_eq!(file.name, "Inst 1_bip.wav");
+    assert_eq!(file.frames, 99_807);
+    assert_eq!(file.sample_rate, 44_100);
+    assert_eq!(file.bits_per_sample, 24);
+}
+
+#[test]
+fn inst_1_region_starts_at_bar_1() {
+    let Some((_dir, bundle)) = copy_project() else {
+        return;
+    };
+    let project = read_full(&bundle).expect("read_full");
+    let region = inst_1(&project).midi_regions.first().expect("the region");
+    assert_eq!(region.start_tick, Some(0));
+    assert_eq!(region.length_ticks, Some(3840), "one bar");
 }
 
 #[test]

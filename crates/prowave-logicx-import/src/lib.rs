@@ -165,12 +165,13 @@ pub fn read_full(path: &Path) -> Result<FullProject, Error> {
         tracks: assembly.tracks,
         unassigned_plugins: assembly.unassigned,
         audio_regions: assembly.audio_regions,
+        audio_files: assembly.audio_files,
         ticks_per_quarter: TICKS_PER_QUARTER,
     })
 }
 
-/// The ticks per quarter note of the note times. See [`FullProject::ticks_per_quarter`].
-const TICKS_PER_QUARTER: u32 = 240;
+/// The ticks per quarter note of every tick value. See [`FullProject::ticks_per_quarter`].
+const TICKS_PER_QUARTER: u32 = 960;
 
 /// The strings of an array in a plist (such as `AudioFiles`), in order; other entries are
 /// skipped.
