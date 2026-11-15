@@ -1,4 +1,5 @@
 # Pro Wave — Official Logic Pro .logicx Support Spec
+> Reference: the LogicProFormatWriter project documents this format in `PROJECTDATA_FORMAT.md`: <https://github.com/jonkubis/LogicProFormatWriter>. Read it first; this file records what a real Logic Pro 11 project showed.
 **Target: Claude must implement this 100% in pure Rust | File: `crates/prowave-logicx-import`**
 > This spec allows ProWave to OPEN and SAVE official Apple Logic Pro .logicx projects on Linux and macOS, while being 10-20x lighter than Logic Pro.
 

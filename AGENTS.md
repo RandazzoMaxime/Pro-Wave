@@ -20,6 +20,8 @@ This is NOT a wrapper around JUCE or Electron. Every agent must respect audio-th
 | **wasm-agent** | `prowave-wasm` | wasm-bindgen, AudioWorkletGlobalScope (128 samples), SharedArrayBuffer + Atomics, OPFS, Web Remote (Logic Remote clone via browser) | No cpal, no native-only deps | Must play 32 tracks in Chrome |
 | **qa-agent** | all | RTL benchmarks, clippy -D warnings, miri, fuzzing (wav, project), drop-out detection, preset compatibility tests vs Logic presets corpus | No feature work | Must verify no alloc on audio thread |
 
+> Before touching anything about Logic Pro's project format, read the **Logic Pro project format** section of `CLAUDE.md`: it links the LogicProFormatWriter project (<https://github.com/jonkubis/LogicProFormatWriter>), which documents the format.
+
 ### NEW CRATE: prowave-logicx-import — Logic Pro Official File Support (see LOGICX_FORMAT_SPEC.md)
 - **logicx-agent** (new) owns `prowave-logicx-import`: parse .logicx bundle, ProjectData linear scan (AU triple, GAME, JSON, channel-strip, region), seed synthesis for export, Linux (no AU) vs macOS (AU) handling, lightweight (<50MB binary, <150MB RAM)
 
